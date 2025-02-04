@@ -2,9 +2,10 @@ package io.github.bitaron.auditLog.core;
 
 
 import io.github.bitaron.auditLog.annotation.Audit;
-import io.github.bitaron.auditLog.contract.ActivityLogMain;
-import io.github.bitaron.auditLog.contract.ActivityLogType;
-import io.github.bitaron.auditLog.dto.ActivityLogDto;
+import io.github.bitaron.auditLog.contract.AuditLogGenericDataGetter;
+import io.github.bitaron.auditLog.contract.AuditLogDataGetter;
+import io.github.bitaron.auditLog.contract.TemplateResolver;
+import io.github.bitaron.auditLog.dto.AuditLogClientData;
 import io.github.bitaron.auditLog.entity.AuditLog;
 import io.github.bitaron.auditLog.repository.AuditLogRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -20,12 +21,15 @@ import java.util.List;
 @Aspect
 @Component
 public class AuditLogAspect {
-    ActivityLogMain activityLogMain;
-    AuditLogRepository auditLogRepository;
 
-    public AuditLogAspect(ActivityLogMain activityLogMain, AuditLogRepository repository) {
-        this.activityLogMain = activityLogMain;
-        this.auditLogRepository = repository;
+    private AuditLogger auditLogger;
+
+    public AuditLogAspect(AuditLogGenericDataGetter auditLogGenericDataGetter,
+                          List<AuditLogDataGetter> auditLogDataGetterList,
+                          AuditLogRepository auditLogRepository,
+                          TemplateResolver templateResolver) {
+        this.auditLogger = new AuditLogger(auditLogGenericDataGetter,
+                auditLogDataGetterList, auditLogRepository, templateResolver);
     }
 
     @AfterReturning(pointcut = "@annotation(actLog)", returning = "response")
@@ -39,19 +43,8 @@ public class AuditLogAspect {
     }
 
     private void logActivity(Audit actLog, JoinPoint joinPoint, Object response, boolean exceptionThrown) {
-        log.info("IN aspect");
-        for (ActivityLogType logType : activityLogMain.getActivityLogTypeList()) {
-            if (logType.getType().equals(actLog.type())) {
-                ActivityLogDto activityLogDto = new ActivityLogDto(activityLogMain.getCallerId(), joinPoint.getArgs(), response,
-                        exceptionThrown);
-                List<String> templateList = logType.getTemplateResolver().resolveTemplate(activityLogDto,
-                        logType.getTemplateNameList());
-                AuditLog entity = new AuditLog();
-                entity.setTemplate(logType.getTemplateNameList().get(0));
-                entity.setTemplate(templateList.get(0));
-                entity.setUserId(activityLogDto.getRequestedUserId());
-                auditLogRepository.save(entity);
-            }
-        }
+        AuditLogClientData auditLogClientData = new AuditLogClientData(joinPoint.getArgs(), response,
+                exceptionThrown);
+        auditLogger.log(actLog.type(),auditLogClientData);
     }
 }

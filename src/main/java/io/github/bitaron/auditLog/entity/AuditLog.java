@@ -26,7 +26,7 @@ public class AuditLog {
     private String actorName;
 
     @Column(name = "client_ip")
-    private String client_ip;
+    private String clientIp;
 
     @Column(name = "client_location")
     private String clientLocation;

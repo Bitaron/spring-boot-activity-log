@@ -1,1 +1,1 @@
-c.io.github.bitaron.auditLog.ActivityLogAutoConfig
+io.github.bitaron.auditLog.config.spring.AuditLogSpringBootAutoConfig
