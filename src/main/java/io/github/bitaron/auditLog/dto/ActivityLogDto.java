@@ -1,4 +1,4 @@
-package io.github.bitaron.core;
+package io.github.bitaron.auditLog.dto;
 
 import lombok.Data;
 

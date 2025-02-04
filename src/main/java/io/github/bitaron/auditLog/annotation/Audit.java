@@ -1,4 +1,4 @@
-package io.github.bitaron.core;
+package io.github.bitaron.auditLog.annotation;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -7,7 +7,7 @@ import java.lang.annotation.Target;
 
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)
-public @interface ActivityLog {
+public @interface Audit {
     String type();
 
 }

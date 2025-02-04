@@ -1,6 +1,8 @@
-package io.github.bitaron.core;
+package io.github.bitaron.auditLog.config.spring;
 
-import io.github.bitaron.core.repository.ActivityLogRepository;
+import io.github.bitaron.auditLog.contract.ActivityLogMain;
+import io.github.bitaron.auditLog.core.AuditLogAspect;
+import io.github.bitaron.auditLog.repository.AuditLogRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -11,17 +13,17 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 @AutoConfiguration
 @EntityScan(basePackages = "io.github.bitaron.core.entity")
 @EnableJpaRepositories(basePackages = "io.github.bitaron.core.repository")
-public class ActivityLogAutoConfig {
+public class AuditLogSpringBootAutoConfig {
     @Autowired
     ActivityLogMain activityLogMain;
 
     @Autowired
-    ActivityLogRepository repository;
+    AuditLogRepository repository;
 
     @Bean
     @ConditionalOnMissingBean
-    public ActivityLogAspect activityLogAspect() {
-        return new ActivityLogAspect(activityLogMain, repository);
+    public AuditLogAspect activityLogAspect() {
+        return new AuditLogAspect(activityLogMain, repository);
     }
 
 }

@@ -1,4 +1,4 @@
-package io.github.bitaron.core;
+package io.github.bitaron.auditLog.contract;
 
 import java.util.List;
 

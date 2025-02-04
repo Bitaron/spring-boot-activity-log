@@ -1,8 +1,12 @@
-package io.github.bitaron.core;
+package io.github.bitaron.auditLog.core;
 
 
-import io.github.bitaron.core.entity.ActivityLogEntity;
-import io.github.bitaron.core.repository.ActivityLogRepository;
+import io.github.bitaron.auditLog.annotation.Audit;
+import io.github.bitaron.auditLog.contract.ActivityLogMain;
+import io.github.bitaron.auditLog.contract.ActivityLogType;
+import io.github.bitaron.auditLog.dto.ActivityLogDto;
+import io.github.bitaron.auditLog.entity.AuditLog;
+import io.github.bitaron.auditLog.repository.AuditLogRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.JoinPoint;
 import org.aspectj.lang.annotation.AfterReturning;
@@ -15,26 +19,26 @@ import java.util.List;
 @Slf4j
 @Aspect
 @Component
-public class ActivityLogAspect {
+public class AuditLogAspect {
     ActivityLogMain activityLogMain;
-    ActivityLogRepository activityLogRepository;
+    AuditLogRepository auditLogRepository;
 
-    public ActivityLogAspect(ActivityLogMain activityLogMain, ActivityLogRepository repository) {
+    public AuditLogAspect(ActivityLogMain activityLogMain, AuditLogRepository repository) {
         this.activityLogMain = activityLogMain;
-        this.activityLogRepository = repository;
+        this.auditLogRepository = repository;
     }
 
     @AfterReturning(pointcut = "@annotation(actLog)", returning = "response")
-    public void logMethodActionSuccess(JoinPoint joinPoint, ActivityLog actLog, Object response) {
+    public void logMethodActionSuccess(JoinPoint joinPoint, Audit actLog, Object response) {
         logActivity(actLog, joinPoint, response, false);
     }
 
     @AfterThrowing(pointcut = "@annotation(actLog)", throwing = "response")
-    public void logMethodActionException(JoinPoint joinPoint, ActivityLog actLog, Object response) {
+    public void logMethodActionException(JoinPoint joinPoint, Audit actLog, Object response) {
         logActivity(actLog, joinPoint, response, true);
     }
 
-    private void logActivity(ActivityLog actLog, JoinPoint joinPoint, Object response, boolean exceptionThrown) {
+    private void logActivity(Audit actLog, JoinPoint joinPoint, Object response, boolean exceptionThrown) {
         log.info("IN aspect");
         for (ActivityLogType logType : activityLogMain.getActivityLogTypeList()) {
             if (logType.getType().equals(actLog.type())) {
@@ -42,11 +46,11 @@ public class ActivityLogAspect {
                         exceptionThrown);
                 List<String> templateList = logType.getTemplateResolver().resolveTemplate(activityLogDto,
                         logType.getTemplateNameList());
-                ActivityLogEntity entity = new ActivityLogEntity();
+                AuditLog entity = new AuditLog();
                 entity.setTemplate(logType.getTemplateNameList().get(0));
                 entity.setTemplate(templateList.get(0));
                 entity.setUserId(activityLogDto.getRequestedUserId());
-                activityLogRepository.save(entity);
+                auditLogRepository.save(entity);
             }
         }
     }

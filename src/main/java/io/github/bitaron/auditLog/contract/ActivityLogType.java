@@ -1,5 +1,6 @@
-package io.github.bitaron.core;
+package io.github.bitaron.auditLog.contract;
 
+import io.github.bitaron.auditLog.contract.TemplateResolver;
 import lombok.Data;
 
 import java.util.List;
