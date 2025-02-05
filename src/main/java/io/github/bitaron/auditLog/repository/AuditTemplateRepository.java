@@ -6,5 +6,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
 
 public interface AuditTemplateRepository extends JpaRepository<AuditTemplate, Long> {
-    List<AuditTemplate> findAllByName(List<String> templateList);
+    List<AuditTemplate> findAllByNameIn(List<String> templateList);
 }

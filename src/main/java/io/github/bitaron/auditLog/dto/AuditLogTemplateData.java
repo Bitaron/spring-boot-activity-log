@@ -1,5 +1,7 @@
 package io.github.bitaron.auditLog.dto;
 
+import java.io.Serializable;
+
 /**
  * An abstract base class representing template data for audit logs.
  * <p>
@@ -10,5 +12,5 @@ package io.github.bitaron.auditLog.dto;
  *
  * @since 1.0
  */
-public abstract class AuditLogTemplateData {
+public abstract class AuditLogTemplateData implements Serializable {
 }

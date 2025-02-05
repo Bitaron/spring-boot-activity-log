@@ -10,11 +10,11 @@ import java.util.List;
  * <p>
  * Implementations of this interface supply contextual information for audit logging based on
  * the {@link io.github.bitaron.auditLog.annotation.Audit#type()} specified in the corresponding annotated method. The audit subsystem
- * uses the value returned by {@link #getActivityType()} to match with {@code @Audit} annotations.
+ * uses the value returned by {@link #getAuditType()} to match with {@code @Audit} annotations.
  *
  * <p><b>Implementation Requirements:</b>
  * <ul>
- *   <li>{@link #getActivityType()} must exactly match an {@code @Audit(type = "value")} annotation</li>
+ *   <li>{@link #getAuditType()} must exactly match an {@code @Audit(type = "value")} annotation</li>
  *   <li>All methods should return non-null values unless explicitly documented otherwise</li>
  *   <li>Implementations are typically registered with the audit subsystem at runtime</li>
  * </ul>
@@ -34,13 +34,13 @@ import java.util.List;
  */
 public interface AuditLogDataGetter {
     /**
-     * Returns the activity type identifier that matches the {@link io.github.bitaron.auditLog.annotation.Audit#type()} value.
+     * Returns the audit type identifier that matches the {@link io.github.bitaron.auditLog.annotation.Audit#type()} value.
      * This value is used by the audit system to associate audit configurations with
      * specific method invocations.
      *
      * @return A non-null string identifier matching an {@code @Audit} annotation type
      */
-    String getActivityType();
+    String getAuditType();
 
     /**
      * Provides a name for the audited action.

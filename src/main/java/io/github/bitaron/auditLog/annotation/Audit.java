@@ -13,7 +13,7 @@ import java.lang.annotation.Target;
  * and retrieve corresponding audit data through implementations of the
  * {@link io.github.bitaron.auditLog.contract.AuditLogDataGetter} interface.
  *
- * <p>The audit system matches implementations of {@link io.github.bitaron.auditLog.contract.AuditLogDataGetter#getActivityType()}
+ * <p>The audit system matches implementations of {@link io.github.bitaron.auditLog.contract.AuditLogDataGetter#getAuditType()}
  * with the {@code type} specified in this annotation to determine which data getter
  * should be used for collecting audit information.
  *
@@ -29,7 +29,7 @@ import java.lang.annotation.Target;
  * "USER_LOGIN" from its {@code getActivityType()} method.
  *
  * @see io.github.bitaron.auditLog.contract.AuditLogDataGetter
- * @see io.github.bitaron.auditLog.contract.AuditLogDataGetter#getActivityType()
+ * @see io.github.bitaron.auditLog.contract.AuditLogDataGetter#getAuditType()
  *
  * @author [Your Name]
  * @version 1.0
@@ -41,7 +41,7 @@ public @interface Audit {
      * Specifies the type of audit.
      * <p>
      * This value should match the audit type returned by the
-     * {@link io.github.bitaron.auditLog.contract.AuditLogDataGetter#getActivityType()} method of the corresponding data getter.
+     * {@link io.github.bitaron.auditLog.contract.AuditLogDataGetter#getAuditType()} method of the corresponding data getter.
      * </p>
      *
      * @return the audit type as a {@code String}

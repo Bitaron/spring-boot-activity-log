@@ -19,6 +19,9 @@ public class AuditLog {
     @Column(name = "id")
     private Long id;
 
+    @Column(name = "audit_type")
+    private String auditType;
+
     @Column(name = "user_id")
     private String actorId;
 

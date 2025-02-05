@@ -49,9 +49,9 @@ public class AuditLogger {
         this.templateResolver = templateResolver;
 
         for (AuditLogDataGetter auditLogDataGetter : auditLogDataGetterList) {
-            if (auditLogDataGetter.getActionType() != null
-                    && !auditLogDataGetter.getActionType().isEmpty()) {
-                this.auditTypeToDataGetterMap.put(auditLogDataGetter.getActionType(), auditLogDataGetter);
+            if (auditLogDataGetter.getAuditType() != null
+                    && !auditLogDataGetter.getAuditType().isEmpty()) {
+                this.auditTypeToDataGetterMap.put(auditLogDataGetter.getAuditType(), auditLogDataGetter);
             }
         }
     }
@@ -62,9 +62,9 @@ public class AuditLogger {
         Gson gson = new Gson();
         AuditLogDataGetter auditLogDataGetter = auditTypeToDataGetterMap.get(auditType);
         if (auditLogDataGetter == null) {
-            log.error(STR."No data getter found for audit type: \{auditType}");
+            log.error("No data getter found for audit type: {}",auditType);
         } else {
-            List<AuditTemplate> auditTemplateList = auditTemplateRepository.findAllByName(auditLogDataGetter.getTemplateList());
+            List<AuditTemplate> auditTemplateList = auditTemplateRepository.findAllByNameIn(auditLogDataGetter.getTemplateList());
             Long groupId = null;
             if (auditLogDataGetter.getGroupName() != null) {
                 AuditGroup auditGroup = new AuditGroup();
@@ -81,6 +81,7 @@ public class AuditLogger {
                         String message = templateResolver.resolveTemplate(auditTemplate.getTemplate(),
                                 templateData);
                         AuditLog auditLog = new AuditLog();
+                        auditLog.setAuditType(auditType);
                         auditLog.setActionName(auditLogDataGetter.getActionName());
                         auditLog.setActionType(auditLogDataGetter.getActionType());
                         auditLog.setActorId(auditLogGenericDataGetter.getActorId());
