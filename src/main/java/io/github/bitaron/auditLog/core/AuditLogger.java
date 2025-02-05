@@ -1,9 +1,13 @@
 package io.github.bitaron.auditLog.core;
 
+import com.google.gson.Gson;
 import io.github.bitaron.auditLog.contract.AuditLogDataGetter;
 import io.github.bitaron.auditLog.contract.AuditLogGenericDataGetter;
 import io.github.bitaron.auditLog.contract.TemplateResolver;
 import io.github.bitaron.auditLog.dto.AuditLogClientData;
+import io.github.bitaron.auditLog.dto.AuditLogTemplateData;
+import io.github.bitaron.auditLog.entity.AuditGroup;
+import io.github.bitaron.auditLog.entity.AuditLog;
 import io.github.bitaron.auditLog.entity.AuditTemplate;
 import io.github.bitaron.auditLog.repository.AuditGroupRepository;
 import io.github.bitaron.auditLog.repository.AuditLogRepository;
@@ -11,6 +15,9 @@ import io.github.bitaron.auditLog.repository.AuditTemplateRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,25 +46,58 @@ public class AuditLogger {
         this.auditTemplateRepository = auditTemplateRepository;
         this.auditGroupRepository = auditGroupRepository;
         this.auditTypeToDataGetterMap = new HashMap<>();
+        this.templateResolver = templateResolver;
+
         for (AuditLogDataGetter auditLogDataGetter : auditLogDataGetterList) {
             if (auditLogDataGetter.getActionType() != null
                     && !auditLogDataGetter.getActionType().isEmpty()) {
                 this.auditTypeToDataGetterMap.put(auditLogDataGetter.getActionType(), auditLogDataGetter);
             }
-            {
-            }
-            this.templateResolver = templateResolver;
-        }
-
-        @Async
-        public void log (String auditType, AuditLogClientData clientData){
-            clientData.setActorId(auditLogGenericDataGetter.getActorId());
-            AuditLogDataGetter auditLogDataGetter = auditTypeToDataGetterMap.get(auditType);
-            if (auditLogDataGetter == null) {
-                log.error(STR."No data getter found for audit type: \{auditType}");
-            } else {
-                List<AuditTemplate> auditTemplateList = auditTemplateRepository.findAllByName(auditLogDataGetter.getTemplateList());
-
-            }
         }
     }
+
+    @Async
+    public void log(String auditType, AuditLogClientData clientData) {
+        clientData.setActorId(auditLogGenericDataGetter.getActorId());
+        Gson gson = new Gson();
+        AuditLogDataGetter auditLogDataGetter = auditTypeToDataGetterMap.get(auditType);
+        if (auditLogDataGetter == null) {
+            log.error(STR."No data getter found for audit type: \{auditType}");
+        } else {
+            List<AuditTemplate> auditTemplateList = auditTemplateRepository.findAllByName(auditLogDataGetter.getTemplateList());
+            Long groupId = null;
+            if (auditLogDataGetter.getGroupName() != null) {
+                AuditGroup auditGroup = new AuditGroup();
+                auditGroup.setName(auditLogDataGetter.getGroupName());
+                auditGroupRepository.save(auditGroup);
+                groupId = auditGroup.getId();
+            }
+            List<AuditLog> auditLogList = new ArrayList<>();
+            for (String template : auditLogDataGetter.getTemplateList()) {
+                for (AuditTemplate auditTemplate : auditTemplateList) {
+                    if (auditTemplate.getName().equals(template)) {
+                        AuditLogTemplateData templateData = auditLogDataGetter.getData(clientData);
+                        LocalDateTime currentTime = LocalDateTime.now(ZoneOffset.UTC);
+                        String message = templateResolver.resolveTemplate(auditTemplate.getTemplate(),
+                                templateData);
+                        AuditLog auditLog = new AuditLog();
+                        auditLog.setActionName(auditLogDataGetter.getActionName());
+                        auditLog.setActionType(auditLogDataGetter.getActionType());
+                        auditLog.setActorId(auditLogGenericDataGetter.getActorId());
+                        auditLog.setActorName(auditLogGenericDataGetter.getActorName());
+                        auditLog.setClientIp(auditLogGenericDataGetter.getClientIp());
+                        auditLog.setClientLocation(auditLogGenericDataGetter.getClientLocation());
+                        auditLog.setUserAgent(auditLogGenericDataGetter.getUserAgent());
+                        auditLog.setCreatedAt(currentTime);
+                        auditLog.setTemplateId(auditTemplate.getId());
+                        auditLog.setMessage(message);
+                        auditLog.setData(gson.toJson(templateData));
+                        auditLog.setGroupId(groupId);
+                        auditLogList.add(auditLog);
+                    }
+                }
+            }
+            auditLogRepository.saveAll(auditLogList);
+        }
+    }
+}

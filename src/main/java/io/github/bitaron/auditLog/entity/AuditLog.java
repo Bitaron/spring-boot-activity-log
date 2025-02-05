@@ -54,6 +54,6 @@ public class AuditLog {
     private String message;
 
     @Column(name = "group_id")
-    private String groupId;
+    private Long groupId;
 
 }

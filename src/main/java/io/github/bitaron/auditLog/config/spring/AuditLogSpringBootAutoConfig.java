@@ -4,7 +4,9 @@ import io.github.bitaron.auditLog.contract.AuditLogDataGetter;
 import io.github.bitaron.auditLog.contract.AuditLogGenericDataGetter;
 import io.github.bitaron.auditLog.contract.TemplateResolver;
 import io.github.bitaron.auditLog.core.AuditLogAspect;
+import io.github.bitaron.auditLog.repository.AuditGroupRepository;
 import io.github.bitaron.auditLog.repository.AuditLogRepository;
+import io.github.bitaron.auditLog.repository.AuditTemplateRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -32,12 +34,18 @@ public class AuditLogSpringBootAutoConfig {
     @Autowired
     AuditLogRepository repository;
 
+    @Autowired
+    AuditTemplateRepository auditTemplateRepository;
+
+    @Autowired
+    AuditGroupRepository auditGroupRepository;
+
     @Bean
     @ConditionalOnMissingBean
     public AuditLogAspect activityLogAspect() {
         return new AuditLogAspect(auditLogGenericDataGetter,
                 auditLogGenericDataGetterList,
-                repository, templateResolver);
+                repository, auditTemplateRepository, auditGroupRepository, templateResolver);
     }
 
 }
