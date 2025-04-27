@@ -4,6 +4,9 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * Indicates that a method should be audited for system usage tracking purposes.
@@ -24,15 +27,14 @@ import java.lang.annotation.Target;
  *     // Method implementation
  * }
  * </pre>
- *
+ * <p>
  * This would require an implementation of {@code AuditLogDataGetter} that returns
  * "USER_LOGIN" from its {@code getActivityType()} method.
  *
- * @see io.github.bitaron.auditLog.contract.AuditLogDataGetter
- * @see io.github.bitaron.auditLog.contract.AuditLogDataGetter#getAuditType()
- *
  * @author [Your Name]
  * @version 1.0
+ * @see io.github.bitaron.auditLog.contract.AuditLogDataGetter
+ * @see io.github.bitaron.auditLog.contract.AuditLogDataGetter#getAuditType()
  */
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)
@@ -46,6 +48,14 @@ public @interface Audit {
      *
      * @return the audit type as a {@code String}
      */
-    String type();
+    String auditType();
+
+    String actionName() default "";
+
+    String actionType() default "";
+
+    String groupName() default "";
+
+    String[] templateList() default {};
 
 }

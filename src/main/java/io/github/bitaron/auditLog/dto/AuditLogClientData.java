@@ -1,6 +1,11 @@
 package io.github.bitaron.auditLog.dto;
 
+import io.github.bitaron.auditLog.contract.AuditLogGenericDataGetter;
+import io.github.bitaron.auditLog.properties.AuditLogProperties;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.Data;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
  * Represents client-specific execution context data for audit logging purposes.
@@ -29,6 +34,11 @@ public class AuditLogClientData {
      * May be {@code null} if not applicable or unavailable.
      */
     private String actorId;
+    private String actorName;
+    private String clientLocation;
+    private String clientIp;
+    private String userAgent;
+
 
     /**
      * The arguments passed to the audited method. Preserved as:
@@ -64,15 +74,33 @@ public class AuditLogClientData {
     /**
      * Constructs an audit log context container with execution results.
      *
-     * @param args The method parameters received by the audited method.
-     *        May be {@code null}, a single object, or an object array.
-     * @param response The method return value when no exception occurred,
-     *        or the exception object when {@code exceptionThrown} is {@code true}.
-     *        May be {@code null} for void methods or unthrown exceptions.
+     * @param args            The method parameters received by the audited method.
+     *                        May be {@code null}, a single object, or an object array.
+     * @param response        The method return value when no exception occurred,
+     *                        or the exception object when {@code exceptionThrown} is {@code true}.
+     *                        May be {@code null} for void methods or unthrown exceptions.
      * @param exceptionThrown {@code true} if the method terminated with an exception,
-     *        {@code false} for successful execution
+     *                        {@code false} for successful execution
      */
-    public AuditLogClientData(Object args, Object response, boolean exceptionThrown) {
+    public AuditLogClientData(Object args, Object response, boolean exceptionThrown,
+                              AuditLogGenericDataGetter auditLogGenericDataGetter,
+                              AuditLogProperties auditLogProperties) {
+        if (auditLogGenericDataGetter == null && RequestContextHolder.getRequestAttributes() != null) {
+            HttpServletRequest request =
+                    ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes())
+                            .getRequest();
+            this.clientIp = getClientIP(request);
+            this.userAgent = request.getHeader("User-Agent");
+            this.clientLocation = getLocationFromIP(this.clientIp);
+            this.actorId = request.getHeader(auditLogProperties.getHeaderFor(AuditLogProperties.REQUESTER_ID));
+            this.actorName = request.getHeader(auditLogProperties.getHeaderFor(AuditLogProperties.REQUESTER_NAME));
+        } else if (auditLogGenericDataGetter != null) {
+            this.clientIp = auditLogGenericDataGetter.getClientIp();
+            this.userAgent = auditLogGenericDataGetter.getUserAgent();
+            this.clientLocation = auditLogGenericDataGetter.getClientLocation();
+            this.actorId = auditLogGenericDataGetter.getActorId();
+            this.actorName = auditLogGenericDataGetter.getActorName();
+        }
         this.args = args;
         this.exceptionThrown = exceptionThrown;
         if (!exceptionThrown) {
@@ -80,5 +108,26 @@ public class AuditLogClientData {
         } else {
             this.exception = response;
         }
+    }
+
+    // Get client IP (handles proxies like Nginx or Cloudflare)
+    private String getClientIP(HttpServletRequest request) {
+        String ip = request.getHeader("X-Forwarded-For");
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("Proxy-Client-IP");
+        }
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("WL-Proxy-Client-IP");
+        }
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getRemoteAddr();
+        }
+        return ip.split(",")[0].trim(); // Handle multiple IPs in X-Forwarded-For
+    }
+
+    // Example: Simple IP-to-location lookup (requires a geolocation service/database)
+    private String getLocationFromIP(String ip) {
+        // Replace with actual implementation (e.g., MaxMind GeoIP2, IPAPI, etc.)
+        return "Unknown Location (Demo)";
     }
 }

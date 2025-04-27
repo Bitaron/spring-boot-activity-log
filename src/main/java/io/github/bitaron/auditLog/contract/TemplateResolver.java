@@ -1,5 +1,6 @@
 package io.github.bitaron.auditLog.contract;
 
+import io.github.bitaron.auditLog.dto.AuditLogClientData;
 import io.github.bitaron.auditLog.dto.AuditLogTemplateData;
 
 /**
@@ -29,5 +30,5 @@ public interface TemplateResolver {
      * @param dto the data transfer object that provides the dynamic values for the template
      * @return a fully resolved string with all applicable placeholders replaced by actual values
      */
-    String resolveTemplate(String template, AuditLogTemplateData dto);
+    String resolveTemplate(String template, AuditLogClientData dto);
 }

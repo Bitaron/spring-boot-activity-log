@@ -2,10 +2,10 @@ package io.github.bitaron.auditLog.core;
 
 
 import io.github.bitaron.auditLog.annotation.Audit;
-import io.github.bitaron.auditLog.contract.AuditLogDataGetter;
 import io.github.bitaron.auditLog.contract.AuditLogGenericDataGetter;
 import io.github.bitaron.auditLog.contract.TemplateResolver;
 import io.github.bitaron.auditLog.dto.AuditLogClientData;
+import io.github.bitaron.auditLog.properties.AuditLogProperties;
 import io.github.bitaron.auditLog.repository.AuditGroupRepository;
 import io.github.bitaron.auditLog.repository.AuditLogRepository;
 import io.github.bitaron.auditLog.repository.AuditTemplateRepository;
@@ -15,6 +15,7 @@ import org.aspectj.lang.annotation.AfterReturning;
 import org.aspectj.lang.annotation.AfterThrowing;
 import org.aspectj.lang.annotation.Aspect;
 import org.springframework.stereotype.Component;
+import org.springframework.web.context.request.RequestContextHolder;
 
 import java.util.List;
 
@@ -39,7 +40,6 @@ import java.util.List;
  * <p><b>Dependencies:</b>
  * <ul>
  *   <li>{@link AuditLogGenericDataGetter} - Provides environmental/contextual audit data</li>
- *   <li>{@link AuditLogDataGetter} implementations - Supply activity-specific audit data</li>
  *   <li>{@link AuditLogRepository} - Handles audit record persistence</li>
  *   <li>{@link TemplateResolver} - Formats audit data for storage</li>
  * </ul>
@@ -57,31 +57,35 @@ import java.util.List;
 public class AuditLogAspect {
 
     private AuditLogger auditLogger;
+    private AuditLogGenericDataGetter auditLogGenericDataGetter;
+    private AuditLogProperties auditLogProperties;
+
 
     /**
      * Constructs the audit aspect with required dependencies.
      *
      * @param auditLogGenericDataGetter Provides generic audit context information
-     * @param auditLogDataGetterList List of activity-specific data getters
-     * @param auditLogRepository Repository for persisting audit records
-     * @param templateResolver Template engine for formatting log entries
+     * @param auditLogRepository        Repository for persisting audit records
+     * @param templateResolver          Template engine for formatting log entries
      */
-    public AuditLogAspect(AuditLogGenericDataGetter auditLogGenericDataGetter,
-                          List<AuditLogDataGetter> auditLogDataGetterList,
+    public AuditLogAspect(AuditLogProperties auditLogProperties,
+                          AuditLogGenericDataGetter auditLogGenericDataGetter,
                           AuditLogRepository auditLogRepository,
                           AuditTemplateRepository auditTemplateRepository,
                           AuditGroupRepository auditGroupRepository,
                           TemplateResolver templateResolver) {
+        this.auditLogGenericDataGetter = auditLogGenericDataGetter;
+        this.auditLogProperties = auditLogProperties;
         this.auditLogger = new AuditLogger(auditLogGenericDataGetter,
-                auditLogDataGetterList, auditLogRepository,auditTemplateRepository,auditGroupRepository, templateResolver);
+                auditLogRepository, auditTemplateRepository, auditGroupRepository, templateResolver);
     }
 
     /**
      * Logs successful method executions after normal return.
      *
      * @param joinPoint AspectJ join point providing access to method signature and arguments
-     * @param actLog The {@link Audit} annotation from the intercepted method
-     * @param response The method's return value
+     * @param actLog    The {@link Audit} annotation from the intercepted method
+     * @param response  The method's return value
      */
     @AfterReturning(pointcut = "@annotation(actLog)", returning = "response")
     public void logMethodActionSuccess(JoinPoint joinPoint, Audit actLog, Object response) {
@@ -92,8 +96,8 @@ public class AuditLogAspect {
      * Logs failed method executions after exception throw.
      *
      * @param joinPoint AspectJ join point providing access to method signature and arguments
-     * @param actLog The {@link Audit} annotation from the intercepted method
-     * @param response The thrown exception object
+     * @param actLog    The {@link Audit} annotation from the intercepted method
+     * @param response  The thrown exception object
      */
     @AfterThrowing(pointcut = "@annotation(actLog)", throwing = "response")
     public void logMethodActionException(JoinPoint joinPoint, Audit actLog, Object response) {
@@ -103,14 +107,18 @@ public class AuditLogAspect {
     /**
      * Central logging handler that creates audit context and triggers logging.
      *
-     * @param actLog Audit annotation metadata
-     * @param joinPoint Method execution context
-     * @param response Method return value or exception
+     * @param actLog          Audit annotation metadata
+     * @param joinPoint       Method execution context
+     * @param response        Method return value or exception
      * @param exceptionThrown Flag indicating execution outcome
      */
     private void logActivity(Audit actLog, JoinPoint joinPoint, Object response, boolean exceptionThrown) {
+
+        if (RequestContextHolder.getRequestAttributes() == null && auditLogGenericDataGetter == null) {
+            log.info("No source found for getting requester info");
+        }
         AuditLogClientData auditLogClientData = new AuditLogClientData(joinPoint.getArgs(), response,
-                exceptionThrown);
-        auditLogger.log(actLog.type(),auditLogClientData);
+                exceptionThrown, this.auditLogGenericDataGetter,this.auditLogProperties);
+        auditLogger.log(actLog, auditLogClientData);
     }
 }

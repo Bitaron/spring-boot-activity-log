@@ -1,41 +1,5 @@
 package io.github.bitaron.auditLog.contract;
 
-import io.github.bitaron.auditLog.dto.AuditLogTemplateData;
-
-/**
- * Provides generic contextual information about the actor and environment for audit logging.
- * <p>
- * This interface supplies common audit metadata that is typically available across all audit events,
- * including actor identification and client environment details. Implementations are usually
- * context-aware, retrieving information from the execution environment (e.g., web request context,
- * security subsystem, or thread-local storage).
- *
- * <p><b>Relationship with Other Components:</b>
- * <ul>
- *   <li>Used in conjunction with {@link AuditLogDataGetter} to provide complete audit information</li>
- *   <li>Data from this interface often populates common fields in {@link AuditLogTemplateData}</li>
- * </ul>
- *
- * <p><b>Implementation Requirements:</b>
- * <ul>
- *   <li>Methods should return non-null values when information is available</li>
- *   <li>Return empty strings for unavailable non-critical information</li>
- *   <li>Implementations should be thread-safe if used in concurrent environments</li>
- * </ul>
- *
- * <p><b>Example Implementation:</b>
- * <pre>
- * public class WebRequestAuditDataGetter implements AuditLogGenericDataGetter {
- *     public String getActorId() {
- *         return SecurityContext.getCurrentUser().getId();
- *     }
- *     // ... other method implementations using request context ...
- * }
- * </pre>
- *
- * @see AuditLogDataGetter
- * @see AuditLogTemplateData
- */
 public interface AuditLogGenericDataGetter {
 
     /**
