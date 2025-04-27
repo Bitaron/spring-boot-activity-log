@@ -15,7 +15,7 @@ import io.github.bitaron.auditLog.dto.AuditLogTemplateData;
  * @see AuditLogTemplateData
  * @since 1.0
  */
-public interface TemplateResolver {
+public interface AuditLogTemplateResolver {
 
     /**
      * Resolves the provided template by substituting placeholders with values extracted
@@ -27,8 +27,8 @@ public interface TemplateResolver {
      * </p>
      *
      * @param template the template string containing placeholders to be replaced
-     * @param dto the data transfer object that provides the dynamic values for the template
+     * @param dto      the data transfer object that provides the dynamic values for the template
      * @return a fully resolved string with all applicable placeholders replaced by actual values
      */
-    String resolveTemplate(String template, AuditLogClientData dto);
+    String resolveTemplate(String name, String template, AuditLogClientData dto);
 }

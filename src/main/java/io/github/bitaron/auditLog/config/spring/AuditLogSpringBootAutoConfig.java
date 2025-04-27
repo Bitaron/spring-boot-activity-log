@@ -1,8 +1,9 @@
 package io.github.bitaron.auditLog.config.spring;
 
 import io.github.bitaron.auditLog.contract.AuditLogGenericDataGetter;
-import io.github.bitaron.auditLog.contract.TemplateResolver;
+import io.github.bitaron.auditLog.contract.AuditLogTemplateResolver;
 import io.github.bitaron.auditLog.core.AuditLogAspect;
+import io.github.bitaron.auditLog.core.FreemakerTemplateResolver;
 import io.github.bitaron.auditLog.properties.AuditLogProperties;
 import io.github.bitaron.auditLog.repository.AuditGroupRepository;
 import io.github.bitaron.auditLog.repository.AuditLogRepository;
@@ -20,12 +21,12 @@ import org.springframework.scheduling.annotation.EnableAsync;
 @EntityScan(basePackages = "io.github.bitaron.auditLog.entity")
 @EnableJpaRepositories(basePackages = "io.github.bitaron.auditLog.repository")
 public class AuditLogSpringBootAutoConfig {
-    @Autowired
+    @Autowired(required = false)
     AuditLogGenericDataGetter auditLogGenericDataGetter;
 
 
-    @Autowired
-    TemplateResolver templateResolver;
+    @Autowired(required = false)
+    AuditLogTemplateResolver auditLogTemplateResolver;
 
     @Autowired
     AuditLogRepository repository;
@@ -43,7 +44,13 @@ public class AuditLogSpringBootAutoConfig {
     @ConditionalOnMissingBean
     public AuditLogAspect activityLogAspect() {
         return new AuditLogAspect(auditLogProperties, auditLogGenericDataGetter,
-                repository, auditTemplateRepository, auditGroupRepository, templateResolver);
+                repository, auditTemplateRepository, auditGroupRepository, auditLogTemplateResolver);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public AuditLogTemplateResolver auditLogTemplateResolver() {
+        return new FreemakerTemplateResolver();
     }
 
 }

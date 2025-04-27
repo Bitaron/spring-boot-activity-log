@@ -3,7 +3,7 @@ package io.github.bitaron.auditLog.core;
 import com.google.gson.Gson;
 import io.github.bitaron.auditLog.annotation.Audit;
 import io.github.bitaron.auditLog.contract.AuditLogGenericDataGetter;
-import io.github.bitaron.auditLog.contract.TemplateResolver;
+import io.github.bitaron.auditLog.contract.AuditLogTemplateResolver;
 import io.github.bitaron.auditLog.dto.AuditLogClientData;
 import io.github.bitaron.auditLog.entity.AuditGroup;
 import io.github.bitaron.auditLog.entity.AuditLog;
@@ -27,26 +27,26 @@ public class AuditLogger {
     AuditLogRepository auditLogRepository;
     AuditTemplateRepository auditTemplateRepository;
     AuditGroupRepository auditGroupRepository;
-    TemplateResolver templateResolver;
+    AuditLogTemplateResolver auditLogTemplateResolver;
 
 
     public AuditLogger(AuditLogGenericDataGetter auditLogGenericDataGetter,
                        AuditLogRepository auditLogRepository,
                        AuditTemplateRepository auditTemplateRepository,
                        AuditGroupRepository auditGroupRepository,
-                       TemplateResolver templateResolver) {
+                       AuditLogTemplateResolver auditLogTemplateResolver) {
         this.auditLogGenericDataGetter = auditLogGenericDataGetter;
         this.auditLogRepository = auditLogRepository;
         this.auditTemplateRepository = auditTemplateRepository;
         this.auditGroupRepository = auditGroupRepository;
-        this.templateResolver = templateResolver;
+        this.auditLogTemplateResolver = auditLogTemplateResolver;
     }
 
     @Async
     public void log(Audit audit, AuditLogClientData clientData) {
         clientData.setActorId(auditLogGenericDataGetter.getActorId());
         Gson gson = new Gson();
-        List<String> templateNameList = Arrays.stream(audit.templateList()).toList();
+        List<String> templateNameList = Arrays.stream(audit.templateNameList()).toList();
         List<AuditTemplate> auditTemplateList = auditTemplateRepository.findAllByNameIn(
                 templateNameList);
         Long groupId = null;
@@ -62,7 +62,8 @@ public class AuditLogger {
                 if (auditTemplate.getName().equals(template)) {
 
                     LocalDateTime currentTime = LocalDateTime.now(ZoneOffset.UTC);
-                    String message = templateResolver.resolveTemplate(auditTemplate.getTemplate(), clientData);
+                    String message = auditLogTemplateResolver.resolveTemplate(auditTemplate.getName(),
+                            auditTemplate.getTemplate(), clientData);
                     AuditLog auditLog = new AuditLog();
                     auditLog.setAuditType(audit.auditType());
                     auditLog.setActionName(audit.actionName());

@@ -3,7 +3,7 @@ package io.github.bitaron.auditLog.core;
 
 import io.github.bitaron.auditLog.annotation.Audit;
 import io.github.bitaron.auditLog.contract.AuditLogGenericDataGetter;
-import io.github.bitaron.auditLog.contract.TemplateResolver;
+import io.github.bitaron.auditLog.contract.AuditLogTemplateResolver;
 import io.github.bitaron.auditLog.dto.AuditLogClientData;
 import io.github.bitaron.auditLog.properties.AuditLogProperties;
 import io.github.bitaron.auditLog.repository.AuditGroupRepository;
@@ -16,8 +16,6 @@ import org.aspectj.lang.annotation.AfterThrowing;
 import org.aspectj.lang.annotation.Aspect;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
-
-import java.util.List;
 
 
 /**
@@ -41,7 +39,7 @@ import java.util.List;
  * <ul>
  *   <li>{@link AuditLogGenericDataGetter} - Provides environmental/contextual audit data</li>
  *   <li>{@link AuditLogRepository} - Handles audit record persistence</li>
- *   <li>{@link TemplateResolver} - Formats audit data for storage</li>
+ *   <li>{@link AuditLogTemplateResolver} - Formats audit data for storage</li>
  * </ul>
  *
  * <p><b>Thread Safety:</b> This aspect is typically configured as a Spring singleton bean. All dependencies should be
@@ -66,18 +64,18 @@ public class AuditLogAspect {
      *
      * @param auditLogGenericDataGetter Provides generic audit context information
      * @param auditLogRepository        Repository for persisting audit records
-     * @param templateResolver          Template engine for formatting log entries
+     * @param auditLogTemplateResolver          Template engine for formatting log entries
      */
     public AuditLogAspect(AuditLogProperties auditLogProperties,
                           AuditLogGenericDataGetter auditLogGenericDataGetter,
                           AuditLogRepository auditLogRepository,
                           AuditTemplateRepository auditTemplateRepository,
                           AuditGroupRepository auditGroupRepository,
-                          TemplateResolver templateResolver) {
+                          AuditLogTemplateResolver auditLogTemplateResolver) {
         this.auditLogGenericDataGetter = auditLogGenericDataGetter;
         this.auditLogProperties = auditLogProperties;
         this.auditLogger = new AuditLogger(auditLogGenericDataGetter,
-                auditLogRepository, auditTemplateRepository, auditGroupRepository, templateResolver);
+                auditLogRepository, auditTemplateRepository, auditGroupRepository, auditLogTemplateResolver);
     }
 
     /**

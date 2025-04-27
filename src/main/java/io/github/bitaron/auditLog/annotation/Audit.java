@@ -4,9 +4,6 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
 
 /**
  * Indicates that a method should be audited for system usage tracking purposes.
@@ -56,6 +53,6 @@ public @interface Audit {
 
     String groupName() default "";
 
-    String[] templateList() default {};
+    String[] templateNameList() default {};
 
 }
