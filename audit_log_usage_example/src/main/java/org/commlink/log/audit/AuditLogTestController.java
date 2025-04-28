@@ -1,4 +1,4 @@
-package org.commlink.log;
+package org.commlink.log.audit;
 
 import io.github.bitaron.auditLog.annotation.Audit;
 import jakarta.servlet.http.HttpServletRequest;
@@ -12,9 +12,10 @@ import java.io.Serializable;
 
 
 @RestController
-public class Test {
+public class AuditLogTestController {
 
-    @Audit(type = "test")
+    @Audit(auditType = "test", actionName = "test-action", actionType = "test-type",
+            templateNameList={"test_template"})
     @GetMapping("/test")
     public ResponseEntity test(HttpServletRequest request) throws InterruptedException {
         TestData testData = getTestData();
