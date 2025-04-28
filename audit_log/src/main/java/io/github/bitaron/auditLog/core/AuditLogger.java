@@ -2,7 +2,6 @@ package io.github.bitaron.auditLog.core;
 
 import com.google.gson.Gson;
 import io.github.bitaron.auditLog.annotation.Audit;
-import io.github.bitaron.auditLog.contract.AuditLogGenericDataGetter;
 import io.github.bitaron.auditLog.contract.AuditLogTemplateResolver;
 import io.github.bitaron.auditLog.dto.AuditLogClientData;
 import io.github.bitaron.auditLog.entity.AuditGroup;
@@ -23,19 +22,16 @@ import java.util.List;
 @Slf4j
 public class AuditLogger {
 
-    AuditLogGenericDataGetter auditLogGenericDataGetter;
     AuditLogRepository auditLogRepository;
     AuditTemplateRepository auditTemplateRepository;
     AuditGroupRepository auditGroupRepository;
     AuditLogTemplateResolver auditLogTemplateResolver;
 
 
-    public AuditLogger(AuditLogGenericDataGetter auditLogGenericDataGetter,
-                       AuditLogRepository auditLogRepository,
+    public AuditLogger(AuditLogRepository auditLogRepository,
                        AuditTemplateRepository auditTemplateRepository,
                        AuditGroupRepository auditGroupRepository,
                        AuditLogTemplateResolver auditLogTemplateResolver) {
-        this.auditLogGenericDataGetter = auditLogGenericDataGetter;
         this.auditLogRepository = auditLogRepository;
         this.auditTemplateRepository = auditTemplateRepository;
         this.auditGroupRepository = auditGroupRepository;
@@ -44,7 +40,6 @@ public class AuditLogger {
 
     @Async
     public void log(Audit audit, AuditLogClientData clientData) {
-        clientData.setActorId(auditLogGenericDataGetter.getActorId());
         Gson gson = new Gson();
         List<String> templateNameList = Arrays.stream(audit.templateNameList()).toList();
         List<AuditTemplate> auditTemplateList = auditTemplateRepository.findAllByNameIn(
@@ -68,11 +63,11 @@ public class AuditLogger {
                     auditLog.setAuditType(audit.auditType());
                     auditLog.setActionName(audit.actionName());
                     auditLog.setActionType(audit.actionType());
-                    auditLog.setActorId(auditLogGenericDataGetter.getActorId());
-                    auditLog.setActorName(auditLogGenericDataGetter.getActorName());
-                    auditLog.setClientIp(auditLogGenericDataGetter.getClientIp());
-                    auditLog.setClientLocation(auditLogGenericDataGetter.getClientLocation());
-                    auditLog.setUserAgent(auditLogGenericDataGetter.getUserAgent());
+                    auditLog.setActorId(clientData.getActorId());
+                    auditLog.setActorName(clientData.getActorName());
+                    auditLog.setClientIp(clientData.getClientIp());
+                    auditLog.setClientLocation(clientData.getClientLocation());
+                    auditLog.setUserAgent(clientData.getUserAgent());
                     auditLog.setCreatedAt(currentTime);
                     auditLog.setTemplateId(auditTemplate.getId());
                     auditLog.setMessage(message);

@@ -1,5 +1,6 @@
 package io.github.bitaron.auditLog.dto;
 
+import io.github.bitaron.auditLog.annotation.Audit;
 import io.github.bitaron.auditLog.contract.AuditLogGenericDataGetter;
 import io.github.bitaron.auditLog.properties.AuditLogProperties;
 import jakarta.servlet.http.HttpServletRequest;
@@ -82,24 +83,37 @@ public class AuditLogClientData {
      * @param exceptionThrown {@code true} if the method terminated with an exception,
      *                        {@code false} for successful execution
      */
-    public AuditLogClientData(Object args, Object response, boolean exceptionThrown,
+    public AuditLogClientData(Audit audit, Object args, Object response, boolean exceptionThrown,
                               AuditLogGenericDataGetter auditLogGenericDataGetter,
                               AuditLogProperties auditLogProperties) {
-        if (auditLogGenericDataGetter == null && RequestContextHolder.getRequestAttributes() != null) {
-            HttpServletRequest request =
-                    ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes())
-                            .getRequest();
-            this.clientIp = getClientIP(request);
-            this.userAgent = request.getHeader("User-Agent");
-            this.clientLocation = getLocationFromIP(this.clientIp);
-            this.actorId = request.getHeader(auditLogProperties.getHeaderFor(AuditLogProperties.REQUESTER_ID));
-            this.actorName = request.getHeader(auditLogProperties.getHeaderFor(AuditLogProperties.REQUESTER_NAME));
-        } else if (auditLogGenericDataGetter != null) {
-            this.clientIp = auditLogGenericDataGetter.getClientIp();
-            this.userAgent = auditLogGenericDataGetter.getUserAgent();
-            this.clientLocation = auditLogGenericDataGetter.getClientLocation();
-            this.actorId = auditLogGenericDataGetter.getActorId();
-            this.actorName = auditLogGenericDataGetter.getActorName();
+        if (audit.isActorSystem()) {
+            this.actorName = "SYSTEM";
+        } else if (audit.isActorCommon()) {
+            if (auditLogGenericDataGetter == null && RequestContextHolder.getRequestAttributes() != null) {
+                HttpServletRequest request =
+                        ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes())
+                                .getRequest();
+                this.clientIp = getClientIP(request);
+                this.userAgent = request.getHeader("User-Agent");
+                this.clientLocation = getLocationFromIP(this.clientIp);
+                this.actorId = request.getHeader(auditLogProperties.getHeaderFor(AuditLogProperties.REQUESTER_ID));
+                this.actorName = request.getHeader(auditLogProperties.getHeaderFor(AuditLogProperties.REQUESTER_NAME));
+            } else if (auditLogGenericDataGetter != null) {
+                this.clientIp = auditLogGenericDataGetter.getClientIp();
+                this.userAgent = auditLogGenericDataGetter.getUserAgent();
+                this.clientLocation = auditLogGenericDataGetter.getClientLocation();
+                this.actorId = auditLogGenericDataGetter.getActorId();
+                this.actorName = auditLogGenericDataGetter.getActorName();
+            }
+        } else {
+            if (response instanceof AuditLogGenericDataGetter) {
+                AuditLogGenericDataGetter dataGetter = (AuditLogGenericDataGetter) response;
+                this.clientIp = dataGetter.getClientIp();
+                this.userAgent = dataGetter.getUserAgent();
+                this.clientLocation = dataGetter.getClientLocation();
+                this.actorId = dataGetter.getActorId();
+                this.actorName = dataGetter.getActorName();
+            }
         }
         this.args = args;
         this.exceptionThrown = exceptionThrown;

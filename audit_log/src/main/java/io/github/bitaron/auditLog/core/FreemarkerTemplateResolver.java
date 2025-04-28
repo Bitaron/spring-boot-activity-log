@@ -12,7 +12,7 @@ import java.io.IOException;
 import java.io.StringReader;
 import java.io.StringWriter;
 
-public class FreemakerTemplateResolver implements AuditLogTemplateResolver {
+public class FreemarkerTemplateResolver implements AuditLogTemplateResolver {
 
     // FreeMarker configuration (thread-safe)
     private static final Configuration FREEMARKER_CONFIG;

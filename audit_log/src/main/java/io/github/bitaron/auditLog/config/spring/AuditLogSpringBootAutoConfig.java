@@ -3,7 +3,7 @@ package io.github.bitaron.auditLog.config.spring;
 import io.github.bitaron.auditLog.contract.AuditLogGenericDataGetter;
 import io.github.bitaron.auditLog.contract.AuditLogTemplateResolver;
 import io.github.bitaron.auditLog.core.AuditLogAspect;
-import io.github.bitaron.auditLog.core.FreemakerTemplateResolver;
+import io.github.bitaron.auditLog.core.FreemarkerTemplateResolver;
 import io.github.bitaron.auditLog.properties.AuditLogProperties;
 import io.github.bitaron.auditLog.repository.AuditGroupRepository;
 import io.github.bitaron.auditLog.repository.AuditLogRepository;
@@ -50,7 +50,7 @@ public class AuditLogSpringBootAutoConfig {
     @Bean
     @ConditionalOnMissingBean
     public AuditLogTemplateResolver auditLogTemplateResolver() {
-        return new FreemakerTemplateResolver();
+        return new FreemarkerTemplateResolver();
     }
 
 }

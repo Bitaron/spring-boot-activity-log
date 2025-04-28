@@ -64,7 +64,7 @@ public class AuditLogAspect {
      *
      * @param auditLogGenericDataGetter Provides generic audit context information
      * @param auditLogRepository        Repository for persisting audit records
-     * @param auditLogTemplateResolver          Template engine for formatting log entries
+     * @param auditLogTemplateResolver  Template engine for formatting log entries
      */
     public AuditLogAspect(AuditLogProperties auditLogProperties,
                           AuditLogGenericDataGetter auditLogGenericDataGetter,
@@ -74,8 +74,8 @@ public class AuditLogAspect {
                           AuditLogTemplateResolver auditLogTemplateResolver) {
         this.auditLogGenericDataGetter = auditLogGenericDataGetter;
         this.auditLogProperties = auditLogProperties;
-        this.auditLogger = new AuditLogger(auditLogGenericDataGetter,
-                auditLogRepository, auditTemplateRepository, auditGroupRepository, auditLogTemplateResolver);
+        this.auditLogger = new AuditLogger(auditLogRepository, auditTemplateRepository,
+                auditGroupRepository, auditLogTemplateResolver);
     }
 
     /**
@@ -115,8 +115,12 @@ public class AuditLogAspect {
         if (RequestContextHolder.getRequestAttributes() == null && auditLogGenericDataGetter == null) {
             log.info("No source found for getting requester info");
         }
-        AuditLogClientData auditLogClientData = new AuditLogClientData(joinPoint.getArgs(), response,
-                exceptionThrown, this.auditLogGenericDataGetter,this.auditLogProperties);
+        AuditLogClientData auditLogClientData = new AuditLogClientData(
+                actLog,
+                joinPoint.getArgs(), response,
+                exceptionThrown,
+                this.auditLogGenericDataGetter,
+                this.auditLogProperties);
         auditLogger.log(actLog, auditLogClientData);
     }
 }
