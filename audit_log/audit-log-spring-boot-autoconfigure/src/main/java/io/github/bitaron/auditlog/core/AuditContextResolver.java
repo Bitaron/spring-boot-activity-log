@@ -26,8 +26,10 @@ public interface AuditContextResolver {
      * @param expressionActorValue the value {@code actorExpression} evaluated to, already
      *                              resolved by the caller; only consulted when
      *                              {@code audit.actorSource() == ActorSource.EXPRESSION}
+     * @param durationMillis       how long the audited method took to execute (or throw), as
+     *                              measured by the caller
      * @return the resolved, immutable audit context
      */
     AuditContext resolve(Audit audit, Object args, Object result, boolean exceptionThrown,
-                          String expressionActorValue);
+                          String expressionActorValue, long durationMillis);
 }

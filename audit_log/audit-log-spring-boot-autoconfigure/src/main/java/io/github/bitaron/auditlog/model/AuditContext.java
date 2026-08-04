@@ -21,6 +21,10 @@ package io.github.bitaron.auditlog.model;
  * @param result           the method's return value on success, or {@code null} on failure
  * @param exception        the thrown exception on failure, or {@code null} on success
  * @param exceptionThrown  {@code true} if the method terminated with an exception
+ * @param durationMillis   how long the audited method took to execute (or throw), in
+ *                          milliseconds
+ * @param traceId          the current distributed-tracing trace id (read from MDC), or
+ *                          {@code null} if none is active
  */
 public record AuditContext(
         String actorId,
@@ -31,6 +35,8 @@ public record AuditContext(
         Object args,
         Object result,
         Object exception,
-        boolean exceptionThrown
+        boolean exceptionThrown,
+        long durationMillis,
+        String traceId
 ) {
 }

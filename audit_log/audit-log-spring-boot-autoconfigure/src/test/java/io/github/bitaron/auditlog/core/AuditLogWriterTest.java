@@ -3,6 +3,8 @@ package io.github.bitaron.auditlog.core;
 import io.github.bitaron.auditlog.annotation.Audit;
 import io.github.bitaron.auditlog.autoconfigure.AuditLogAutoConfiguration;
 import io.github.bitaron.auditlog.entity.AuditLog;
+import io.github.bitaron.auditlog.entity.AuditLogMessage;
+import io.github.bitaron.auditlog.entity.AuditOutcome;
 import io.github.bitaron.auditlog.entity.AuditTemplate;
 import io.github.bitaron.auditlog.model.AuditContext;
 import io.github.bitaron.auditlog.testfixtures.host.HostAppMarker;
@@ -56,8 +58,38 @@ class AuditLogWriterTest {
 
             List<AuditLog> rows = findAll(context);
             assertThat(rows).hasSize(1);
-            assertThat(rows.get(0).getMessage()).isEqualTo("Hello Ada!");
             assertThat(rows.get(0).getActorId()).isEqualTo("actor-1");
+            assertThat(rows.get(0).getOutcome()).isEqualTo(AuditOutcome.SUCCESS);
+
+            List<AuditLogMessage> messages = findAllMessages(context);
+            assertThat(messages).hasSize(1);
+            assertThat(messages.get(0).getMessage()).isEqualTo("Hello Ada!");
+            assertThat(messages.get(0).getAuditLogId()).isEqualTo(rows.get(0).getId());
+        });
+    }
+
+    /**
+     * The direct acceptance test for B4: one invocation naming multiple templates is one audit
+     * event, not one row per rendered message.
+     */
+    @Test
+    void multipleTemplatesYieldOneRowAndMultipleMessages() {
+        contextRunner.run(context -> {
+            seedTemplate(context, "greeting", "Hello ${actorName}!");
+            seedTemplate(context, "farewell", "Bye ${actorName}!");
+            AuditContext context42ms = new AuditContext(
+                    "actor-1", "Ada", null, null, null, null, null, null, false, 42, null);
+            persistSynchronously(context, "twoTemplates", context42ms);
+
+            List<AuditLog> rows = findAll(context);
+            assertThat(rows).hasSize(1);
+            assertThat(rows.get(0).getDurationMs()).isEqualTo(42L);
+            assertThat(rows.get(0).getData()).doesNotContain("actorId").doesNotContain("actor-1");
+
+            List<AuditLogMessage> messages = findAllMessages(context);
+            assertThat(messages).hasSize(2);
+            assertThat(messages).extracting(AuditLogMessage::getMessage)
+                    .containsExactlyInAnyOrder("Hello Ada!", "Bye Ada!");
         });
     }
 
@@ -93,10 +125,8 @@ class AuditLogWriterTest {
         contextRunner.run(context -> {
             persistSynchronously(context, "noTemplates", clientData("actor-1", "Ada", null));
 
-            List<AuditLog> rows = findAll(context);
-            assertThat(rows).hasSize(1);
-            assertThat(rows.get(0).getTemplateId()).isNull();
-            assertThat(rows.get(0).getMessage()).isNull();
+            assertThat(findAll(context)).hasSize(1);
+            assertThat(findAllMessages(context)).isEmpty();
         });
     }
 
@@ -212,6 +242,11 @@ class AuditLogWriterTest {
         return entityManager.createQuery("select a from AuditLog a", AuditLog.class).getResultList();
     }
 
+    private List<AuditLogMessage> findAllMessages(ApplicationContext context) {
+        EntityManager entityManager = context.getBean(EntityManager.class);
+        return entityManager.createQuery("select m from AuditLogMessage m", AuditLogMessage.class).getResultList();
+    }
+
     private TransactionTemplate transactionTemplate(ApplicationContext context) {
         return new TransactionTemplate(context.getBean(PlatformTransactionManager.class));
     }
@@ -221,7 +256,7 @@ class AuditLogWriterTest {
     }
 
     private AuditContext clientData(String actorId, String actorName, Object args) {
-        return new AuditContext(actorId, actorName, null, null, null, args, null, null, false);
+        return new AuditContext(actorId, actorName, null, null, null, args, null, null, false, 0, null);
     }
 
     /** Retrieves a real {@code @Audit} instance off a fixture method, avoiding hand-rolled annotation proxies. */
@@ -245,6 +280,10 @@ class AuditLogWriterTest {
 
         @Audit(auditType = "test", actionName = "action", actionType = "type", templates = {"does-not-exist"})
         void doesNotExist() {
+        }
+
+        @Audit(auditType = "test", actionName = "action", actionType = "type", templates = {"greeting", "farewell"})
+        void twoTemplates() {
         }
 
         @Audit(auditType = "test", actionName = "action", actionType = "type")

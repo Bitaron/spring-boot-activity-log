@@ -1,6 +1,8 @@
 package org.commlink.log;
 
 import io.github.bitaron.auditlog.entity.AuditLog;
+import io.github.bitaron.auditlog.entity.AuditLogMessage;
+import io.github.bitaron.auditlog.entity.AuditOutcome;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.awaitility.Awaitility;
@@ -41,8 +43,10 @@ class AuditLogTestControllerIntegrationTest {
 
     @AfterEach
     void clearAuditLogs() {
-        new TransactionTemplate(transactionManager).executeWithoutResult(status ->
-                entityManager.createQuery("delete from AuditLog").executeUpdate());
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            entityManager.createQuery("delete from AuditLogMessage").executeUpdate();
+            entityManager.createQuery("delete from AuditLog").executeUpdate();
+        });
     }
 
     @Test
@@ -54,7 +58,9 @@ class AuditLogTestControllerIntegrationTest {
 
         AuditLog row = auditLogs().get(0);
         assertThat(row.getAuditType()).isEqualTo("test");
-        assertThat(row.getMessage()).contains("got value 10");
+        assertThat(row.getOutcome()).isEqualTo(AuditOutcome.SUCCESS);
+        assertThat(row.getDurationMs()).isNotNull();
+        assertThat(messagesFor(row)).extracting(AuditLogMessage::getMessage).allMatch(m -> m.contains("got value 10"));
     }
 
     /**
@@ -72,11 +78,20 @@ class AuditLogTestControllerIntegrationTest {
         Awaitility.await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
                 assertThat(auditLogs()).hasSize(1));
 
-        assertThat(auditLogs().get(0).getMessage()).contains("it failed");
+        AuditLog row = auditLogs().get(0);
+        assertThat(row.getOutcome()).isEqualTo(AuditOutcome.FAILURE);
+        assertThat(messagesFor(row)).extracting(AuditLogMessage::getMessage).allMatch(m -> m.contains("it failed"));
     }
 
     private List<AuditLog> auditLogs() {
         return new TransactionTemplate(transactionManager).execute(status ->
                 entityManager.createQuery("select a from AuditLog a", AuditLog.class).getResultList());
+    }
+
+    private List<AuditLogMessage> messagesFor(AuditLog auditLog) {
+        return new TransactionTemplate(transactionManager).execute(status ->
+                entityManager.createQuery("select m from AuditLogMessage m where m.auditLogId = :id", AuditLogMessage.class)
+                        .setParameter("id", auditLog.getId())
+                        .getResultList());
     }
 }

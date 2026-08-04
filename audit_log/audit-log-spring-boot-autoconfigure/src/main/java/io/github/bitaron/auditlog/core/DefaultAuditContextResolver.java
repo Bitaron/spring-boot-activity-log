@@ -7,6 +7,7 @@ import io.github.bitaron.auditlog.model.AuditContext;
 import io.github.bitaron.auditlog.properties.AuditLogProperties;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -45,7 +46,7 @@ public class DefaultAuditContextResolver implements AuditContextResolver {
 
     @Override
     public AuditContext resolve(Audit audit, Object args, Object result, boolean exceptionThrown,
-                                 String expressionActorValue) {
+                                 String expressionActorValue, long durationMillis) {
         String actorId = null;
         String actorName = null;
         String clientIp = null;
@@ -76,7 +77,8 @@ public class DefaultAuditContextResolver implements AuditContextResolver {
         }
 
         return new AuditContext(actorId, actorName, clientLocation, clientIp, userAgent,
-                args, exceptionThrown ? null : result, exceptionThrown ? result : null, exceptionThrown);
+                args, exceptionThrown ? null : result, exceptionThrown ? result : null, exceptionThrown,
+                durationMillis, MDC.get("traceId"));
     }
 
     private CommonActor resolveCommonActor() {
