@@ -4,10 +4,7 @@ package io.github.bitaron.auditlog.core;
 import io.github.bitaron.auditlog.annotation.ActorSource;
 import io.github.bitaron.auditlog.annotation.Audit;
 import io.github.bitaron.auditlog.annotation.AuditIgnore;
-import io.github.bitaron.auditlog.contract.AuditLogGenericDataGetter;
-import io.github.bitaron.auditlog.contract.AuditLogLocationResolver;
-import io.github.bitaron.auditlog.dto.AuditLogClientData;
-import io.github.bitaron.auditlog.properties.AuditLogProperties;
+import io.github.bitaron.auditlog.model.AuditContext;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.JoinPoint;
 import org.aspectj.lang.annotation.AfterReturning;
@@ -21,7 +18,6 @@ import org.springframework.expression.EvaluationContext;
 import org.springframework.expression.Expression;
 import org.springframework.expression.ExpressionParser;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
-import org.springframework.web.context.request.RequestContextHolder;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
@@ -36,7 +32,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * process through the following flow:
  * <ol>
  *   <li>Captures method arguments and execution outcome (success or exception)</li>
- *   <li>Constructs audit context data using {@link AuditLogClientData}</li>
+ *   <li>Constructs audit context data using {@link AuditContext}</li>
  *   <li>Delegates logging operations to {@link AuditLogger}</li>
  * </ol>
  *
@@ -45,6 +41,10 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>{@link #logMethodActionSuccess} - Handles successful method executions</li>
  *   <li>{@link #logMethodActionException} - Handles method executions that throw exceptions</li>
  * </ul>
+ * <p>
+ * Actor/client resolution is delegated to {@link AuditContextResolver} - this aspect only
+ * captures what only AOP can see (arguments, return value, exception, the join point) and
+ * evaluates {@link Audit#actorExpression()}.
  *
  * <p><b>Failure isolation:</b> every step of building and dispatching the audit record is
  * wrapped in a single try/catch that only logs a warning. A failure to record an audit entry -
@@ -62,9 +62,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Aspect
 public class AuditLogAspect {
 
-    private final AuditLogProperties auditLogProperties;
-    private final AuditLogGenericDataGetter auditLogGenericDataGetter;
-    private final AuditLogLocationResolver auditLogLocationResolver;
+    private final AuditContextResolver auditContextResolver;
     private final AuditLogger auditLogger;
 
     private final ExpressionParser expressionParser = new SpelExpressionParser();
@@ -76,13 +74,8 @@ public class AuditLogAspect {
     // distinct @Audit-annotated methods in the application, not by runtime data.
     private final Map<Method, Expression> actorExpressionCache = new ConcurrentHashMap<>();
 
-    public AuditLogAspect(AuditLogProperties auditLogProperties,
-                           AuditLogGenericDataGetter auditLogGenericDataGetter,
-                           AuditLogLocationResolver auditLogLocationResolver,
-                           AuditLogger auditLogger) {
-        this.auditLogProperties = auditLogProperties;
-        this.auditLogGenericDataGetter = auditLogGenericDataGetter;
-        this.auditLogLocationResolver = auditLogLocationResolver;
+    public AuditLogAspect(AuditContextResolver auditContextResolver, AuditLogger auditLogger) {
+        this.auditContextResolver = auditContextResolver;
         this.auditLogger = auditLogger;
     }
 
@@ -120,17 +113,10 @@ public class AuditLogAspect {
      */
     private void logActivity(Audit actLog, JoinPoint joinPoint, Object response, boolean exceptionThrown) {
         try {
-            if (RequestContextHolder.getRequestAttributes() == null && auditLogGenericDataGetter == null) {
-                log.debug("No request context and no AuditLogGenericDataGetter configured; "
-                        + "audit record for {} will have null actor/client fields", actLog.auditType());
-            }
             Object args = buildArgs(joinPoint);
             String expressionActor = resolveActorExpression(actLog, joinPoint, response, exceptionThrown);
-            AuditLogClientData auditLogClientData = new AuditLogClientData(
-                    actLog, args, response, exceptionThrown,
-                    this.auditLogGenericDataGetter, this.auditLogProperties, this.auditLogLocationResolver,
-                    expressionActor);
-            auditLogger.log(actLog, auditLogClientData);
+            AuditContext auditContext = auditContextResolver.resolve(actLog, args, response, exceptionThrown, expressionActor);
+            auditLogger.log(actLog, auditContext);
         } catch (Exception e) {
             log.warn("Failed to record audit log for {}#{}", joinPoint.getSignature().getDeclaringTypeName(),
                     joinPoint.getSignature().getName(), e);

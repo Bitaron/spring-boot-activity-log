@@ -7,7 +7,7 @@ import io.github.bitaron.auditlog.core.AuditLogAspect;
 import io.github.bitaron.auditlog.core.AuditLogWriter;
 import io.github.bitaron.auditlog.core.AuditLogger;
 import io.github.bitaron.auditlog.core.FreemarkerTemplateResolver;
-import io.github.bitaron.auditlog.dto.AuditLogClientData;
+import io.github.bitaron.auditlog.model.AuditContext;
 import io.github.bitaron.auditlog.testfixtures.host.HostAppMarker;
 import io.github.bitaron.auditlog.testfixtures.host.HostRepository;
 import org.junit.jupiter.api.Test;
@@ -112,7 +112,7 @@ class AuditLogAutoConfigurationTest {
 
     static class StubTemplateResolver implements AuditLogTemplateResolver {
         @Override
-        public String resolveTemplate(String name, String template, AuditLogClientData dto) {
+        public String resolveTemplate(String name, String template, AuditContext context) {
             return "stub";
         }
     }

@@ -3,10 +3,10 @@ package io.github.bitaron.auditlog.core;
 import io.github.bitaron.auditlog.annotation.Audit;
 import io.github.bitaron.auditlog.contract.AuditLogArgumentSerializer;
 import io.github.bitaron.auditlog.contract.AuditLogTemplateResolver;
-import io.github.bitaron.auditlog.dto.AuditLogClientData;
 import io.github.bitaron.auditlog.entity.AuditGroup;
 import io.github.bitaron.auditlog.entity.AuditLog;
 import io.github.bitaron.auditlog.entity.AuditTemplate;
+import io.github.bitaron.auditlog.model.AuditContext;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.TypedQuery;
 import lombok.extern.slf4j.Slf4j;
@@ -57,16 +57,16 @@ public class AuditLogWriter {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void persistRequiresNew(Audit audit, AuditLogClientData clientData) {
-        doPersist(audit, clientData);
+    public void persistRequiresNew(Audit audit, AuditContext auditContext) {
+        doPersist(audit, auditContext);
     }
 
     @Transactional(propagation = Propagation.REQUIRED)
-    public void persistShared(Audit audit, AuditLogClientData clientData) {
-        doPersist(audit, clientData);
+    public void persistShared(Audit audit, AuditContext auditContext) {
+        doPersist(audit, auditContext);
     }
 
-    private void doPersist(Audit audit, AuditLogClientData clientData) {
+    private void doPersist(Audit audit, AuditContext auditContext) {
         List<String> templateNameList = Arrays.stream(audit.templates())
                 .distinct()
                 .toList();
@@ -81,7 +81,7 @@ public class AuditLogWriter {
 
         if (templateNameList.isEmpty()) {
             // No templates requested: still record that the method ran, just without a rendered message.
-            auditLogList.add(buildAuditLog(audit, clientData, currentTime, null, null));
+            auditLogList.add(buildAuditLog(audit, auditContext, currentTime, null, null));
         } else {
             for (String templateName : templateNameList) {
                 AuditTemplate auditTemplate = templatesByName.get(templateName);
@@ -91,8 +91,8 @@ public class AuditLogWriter {
                     continue;
                 }
                 String message = auditLogTemplateResolver.resolveTemplate(
-                        auditTemplate.getName(), auditTemplate.getTemplate(), clientData);
-                auditLogList.add(buildAuditLog(audit, clientData, currentTime, auditTemplate.getId(), message));
+                        auditTemplate.getName(), auditTemplate.getTemplate(), auditContext);
+                auditLogList.add(buildAuditLog(audit, auditContext, currentTime, auditTemplate.getId(), message));
             }
         }
 
@@ -109,27 +109,27 @@ public class AuditLogWriter {
         }
     }
 
-    private AuditLog buildAuditLog(Audit audit, AuditLogClientData clientData, LocalDateTime currentTime,
+    private AuditLog buildAuditLog(Audit audit, AuditContext auditContext, LocalDateTime currentTime,
                                     Long templateId, String message) {
         AuditLog auditLog = new AuditLog();
         auditLog.setAuditType(audit.auditType());
         auditLog.setActionName(audit.actionName());
         auditLog.setActionType(audit.actionType());
-        auditLog.setActorId(clientData.getActorId());
-        auditLog.setActorName(clientData.getActorName());
-        auditLog.setClientIp(clientData.getClientIp());
-        auditLog.setClientLocation(clientData.getClientLocation());
-        auditLog.setUserAgent(clientData.getUserAgent());
+        auditLog.setActorId(auditContext.actorId());
+        auditLog.setActorName(auditContext.actorName());
+        auditLog.setClientIp(auditContext.clientIp());
+        auditLog.setClientLocation(auditContext.clientLocation());
+        auditLog.setUserAgent(auditContext.userAgent());
         auditLog.setCreatedAt(currentTime);
         auditLog.setTemplateId(templateId);
         auditLog.setMessage(message);
-        auditLog.setData(serializeData(clientData));
+        auditLog.setData(serializeData(auditContext));
         return auditLog;
     }
 
-    private String serializeData(AuditLogClientData clientData) {
+    private String serializeData(AuditContext auditContext) {
         try {
-            return auditLogArgumentSerializer.serialize(clientData);
+            return auditLogArgumentSerializer.serialize(auditContext);
         } catch (Exception e) {
             log.warn("Argument serializer threw while building the audit log data payload", e);
             return null;

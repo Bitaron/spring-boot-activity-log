@@ -5,10 +5,12 @@ import io.github.bitaron.auditlog.contract.AuditLogGenericDataGetter;
 import io.github.bitaron.auditlog.contract.AuditLogLocationResolver;
 import io.github.bitaron.auditlog.contract.AuditLogTemplateResolver;
 import io.github.bitaron.auditlog.contract.AuditMetricsRecorder;
+import io.github.bitaron.auditlog.core.AuditContextResolver;
 import io.github.bitaron.auditlog.core.AuditLogAspect;
 import io.github.bitaron.auditlog.core.AuditLogTaskExecutor;
 import io.github.bitaron.auditlog.core.AuditLogWriter;
 import io.github.bitaron.auditlog.core.AuditLogger;
+import io.github.bitaron.auditlog.core.DefaultAuditContextResolver;
 import io.github.bitaron.auditlog.core.FreemarkerTemplateResolver;
 import io.github.bitaron.auditlog.core.JacksonAuditLogArgumentSerializer;
 import io.github.bitaron.auditlog.core.NoOpAuditMetricsRecorder;
@@ -112,13 +114,18 @@ public class AuditLogAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public AuditLogAspect auditLogAspect(AuditLogProperties auditLogProperties,
-                                          ObjectProvider<AuditLogGenericDataGetter> auditLogGenericDataGetter,
-                                          ObjectProvider<AuditLogLocationResolver> auditLogLocationResolver,
-                                          AuditLogger auditLogger) {
-        return new AuditLogAspect(auditLogProperties,
+    public AuditContextResolver auditContextResolver(AuditLogProperties auditLogProperties,
+                                                       ObjectProvider<AuditLogGenericDataGetter> auditLogGenericDataGetter,
+                                                       ObjectProvider<AuditLogLocationResolver> auditLogLocationResolver) {
+        return new DefaultAuditContextResolver(
                 auditLogGenericDataGetter.getIfAvailable(),
-                auditLogLocationResolver.getIfAvailable(),
-                auditLogger);
+                auditLogProperties,
+                auditLogLocationResolver.getIfAvailable());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public AuditLogAspect auditLogAspect(AuditContextResolver auditContextResolver, AuditLogger auditLogger) {
+        return new AuditLogAspect(auditContextResolver, auditLogger);
     }
 }

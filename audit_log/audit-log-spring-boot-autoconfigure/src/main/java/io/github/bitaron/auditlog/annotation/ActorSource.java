@@ -10,7 +10,8 @@ public enum ActorSource {
     /**
      * The default: actor and client information come from the configured
      * {@code AuditLogGenericDataGetter} bean if one is present, otherwise from the current HTTP
-     * request (headers/proxy chain - see the trust model documented on {@code AuditLogClientData}).
+     * request (headers/proxy chain - see the trust model documented on
+     * {@code DefaultAuditContextResolver}).
      */
     CONTEXT,
 
