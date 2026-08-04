@@ -223,7 +223,7 @@ class AuditLogWriterTest {
 
     private AuditLogClientData clientData(String actorId, String actorName, Object args) {
         AuditLogClientData data = new AuditLogClientData(
-                fixtureAnnotation("noTemplates"), args, null, false, null, new AuditLogProperties(), null);
+                fixtureAnnotation("noTemplates"), args, null, false, null, new AuditLogProperties(), null, null);
         data.setActorId(actorId);
         data.setActorName(actorName);
         return data;
@@ -240,15 +240,15 @@ class AuditLogWriterTest {
     }
 
     private static final class Fixtures {
-        @Audit(auditType = "test", actionName = "action", actionType = "type", templateNameList = {"greeting"})
+        @Audit(auditType = "test", actionName = "action", actionType = "type", templates = {"greeting"})
         void greeting() {
         }
 
-        @Audit(auditType = "test", actionName = "action", actionType = "type", templateNameList = {"broken"})
+        @Audit(auditType = "test", actionName = "action", actionType = "type", templates = {"broken"})
         void broken() {
         }
 
-        @Audit(auditType = "test", actionName = "action", actionType = "type", templateNameList = {"does-not-exist"})
+        @Audit(auditType = "test", actionName = "action", actionType = "type", templates = {"does-not-exist"})
         void doesNotExist() {
         }
 

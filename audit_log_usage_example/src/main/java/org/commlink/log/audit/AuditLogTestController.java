@@ -15,7 +15,7 @@ import java.io.Serializable;
 public class AuditLogTestController {
 
     @Audit(auditType = "test", actionName = "test-action", actionType = "test-type",
-            templateNameList = {"test_template"})
+            templates = {"test_template"})
     @GetMapping("/test")
     public ResponseEntity<Response> test(HttpServletRequest request) {
         return ResponseEntity.ok(new Response(10, getTestData()));
@@ -27,7 +27,7 @@ public class AuditLogTestController {
      * recorded via {@code logMethodActionException} regardless.
      */
     @Audit(auditType = "test", actionName = "test-action-fail", actionType = "test-type",
-            templateNameList = {"test_template"})
+            templates = {"test_template"})
     @GetMapping("/test/fail")
     public ResponseEntity<Response> testFail(HttpServletRequest request) {
         throw new RuntimeException("Test exception");

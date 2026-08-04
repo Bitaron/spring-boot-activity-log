@@ -54,11 +54,11 @@ class FreemarkerTemplateResolverTest {
     }
 
     private AuditLogClientData clientDataWithActor(String actorName) {
-        // isActorCommon=false with no getter and no request context leaves actor fields
+        // CONTEXT actor source with no getter and no request context leaves actor fields
         // untouched by the constructor, so the explicit setActorName below is the only thing
         // that sets it.
         AuditLogClientData data = new AuditLogClientData(
-                fixtureAudit(), null, null, false, null, new AuditLogProperties(), null);
+                fixtureAudit(), null, null, false, null, new AuditLogProperties(), null, null);
         data.setActorName(actorName);
         return data;
     }
@@ -72,7 +72,7 @@ class FreemarkerTemplateResolverTest {
     }
 
     private static final class Fixture {
-        @Audit(auditType = "test", isActorCommon = false)
+        @Audit(auditType = "test")
         void action() {
         }
     }

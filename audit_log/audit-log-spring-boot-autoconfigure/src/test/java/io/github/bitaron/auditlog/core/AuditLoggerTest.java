@@ -33,7 +33,7 @@ class AuditLoggerTest {
     private final AuditMetricsRecorder metrics = mock(AuditMetricsRecorder.class);
     private final Audit audit = fixtureAudit();
     private final AuditLogClientData clientData = new AuditLogClientData(
-            audit, null, null, false, null, new AuditLogProperties(), null);
+            audit, null, null, false, null, new AuditLogProperties(), null, null);
 
     @AfterEach
     void clearSynchronization() {
@@ -134,7 +134,7 @@ class AuditLoggerTest {
     }
 
     private static final class Fixture {
-        @Audit(auditType = "test", templateNameList = {"greeting"})
+        @Audit(auditType = "test", templates = {"greeting"})
         void action() {
         }
     }
