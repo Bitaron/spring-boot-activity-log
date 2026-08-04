@@ -6,7 +6,7 @@ import freemarker.template.Template;
 import freemarker.template.TemplateException;
 import freemarker.template.TemplateExceptionHandler;
 import io.github.bitaron.auditlog.contract.AuditLogTemplateResolver;
-import io.github.bitaron.auditlog.dto.AuditLogClientData;
+import io.github.bitaron.auditlog.model.AuditContext;
 
 import java.io.IOException;
 import java.io.StringReader;
@@ -58,12 +58,12 @@ public class FreemarkerTemplateResolver implements AuditLogTemplateResolver {
     }
 
     @Override
-    public String resolveTemplate(String name, String template, AuditLogClientData dto) {
+    public String resolveTemplate(String name, String template, AuditContext context) {
         try {
             Template freemarkerTemplate = compiledTemplates.computeIfAbsent(
                     cacheKey(name, template), key -> compile(name, template));
             StringWriter writer = new StringWriter();
-            freemarkerTemplate.process(dto, writer);
+            freemarkerTemplate.process(context, writer);
             return writer.toString();
         } catch (TemplateException | IOException e) {
             throw new RuntimeException("Failed to resolve audit log template \"" + name + "\"", e);

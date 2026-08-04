@@ -1,8 +1,12 @@
 package io.github.bitaron.auditlog.properties;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotNull;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.validation.annotation.Validated;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -16,14 +20,17 @@ import java.util.Set;
  * rather than being a {@code @Component} itself: a library class in a package the consuming
  * application never component-scans would otherwise never become a bean, and the
  * {@code @Autowired AuditLogProperties} that depended on it would fail context startup.
+ * <p>
+ * {@code @Validated}'s JSR-303 constraints are only actually enforced when a validator
+ * implementation (e.g. {@code spring-boot-starter-validation}) is on the consuming application's
+ * classpath; otherwise Spring Boot binds properties without validating them, same as if the
+ * annotations weren't there.
  */
 @Getter
 @Setter
+@Validated
 @ConfigurationProperties(prefix = "audit.log")
 public class AuditLogProperties {
-
-    public static final String REQUESTER_ID = "requesterId";
-    public static final String REQUESTER_NAME = "requesterName";
 
     /**
      * Master switch for the starter. Disabling it skips registering the aspect, the executor,
@@ -31,11 +38,9 @@ public class AuditLogProperties {
      */
     private boolean enabled = true;
 
-    /**
-     * Map of audit actor identifiers to their corresponding HTTP header names.
-     * Example: requesterId -> X-User-Id
-     */
-    private Map<String, String> headerMappings = new HashMap<>();
+    /** HTTP header names the default actor/client resolution reads from. */
+    @Valid
+    private final Headers headers = new Headers();
 
     /**
      * Whether to trust client-supplied proxy headers (X-Forwarded-For, Proxy-Client-IP,
@@ -57,12 +62,14 @@ public class AuditLogProperties {
      * Maximum size, in characters, of the serialized argument/response JSON persisted per audit
      * record. Larger payloads are truncated to protect the audit_log table from runaway rows.
      */
+    @Min(1)
     private int maxSerializedDataLength = 8192;
 
     /**
      * Maximum number of compiled FreeMarker templates kept in memory. The cache is LRU-evicted
      * once this is exceeded, so editing a template repeatedly cannot leak compiled ASTs forever.
      */
+    @Min(1)
     private int maxTemplateCacheSize = 256;
 
     /**
@@ -80,33 +87,56 @@ public class AuditLogProperties {
      *   requirements where "the operation happened but wasn't audited" is unacceptable.</li>
      * </ul>
      */
+    @NotNull
     private DeliveryMode mode = DeliveryMode.ASYNC;
 
-    private final Executor executor = new Executor();
+    /**
+     * Templates keyed by name, defined in configuration rather than the {@code audit_template}
+     * table - see {@code PropertiesAuditTemplateSource}. Lets a template be versioned with the
+     * application's own code/config instead of requiring a separate database write, and is tried
+     * before the database so a property-defined template can override a same-named database row.
+     * Example: {@code audit.log.templates.login-attempt=Login by ${actorName!"unknown"}}.
+     */
+    private Map<String, String> templates = new HashMap<>();
 
-    public String getHeaderFor(String type) {
-        String value = headerMappings.getOrDefault(type, "");
-        if (value.isEmpty()) {
-            if (type.equals(REQUESTER_NAME)) {
-                return "X-USER-NAME";
-            }
-            if (type.equals(REQUESTER_ID)) {
-                return "X-USER-ID";
-            }
-        }
-        return value;
-    }
+    /**
+     * When {@code true}, a {@code @Audit(templates = ...)} name that no configured
+     * {@code AuditTemplateSource} can resolve fails application startup instead of only logging a
+     * warning at call time. Off by default since it requires eagerly scanning every bean for
+     * {@code @Audit}-annotated methods, which not every application wants paid at startup.
+     */
+    private boolean failOnMissingTemplate = false;
+
+    @Valid
+    private final Executor executor = new Executor();
 
     public enum DeliveryMode {
         ASYNC, SYNC
+    }
+
+    /**
+     * Typed replacement for the pre-2.0 {@code Map<String,String> headerMappings} +
+     * {@code getHeaderFor(String)} lookup - the header this starter reads for a given purpose is
+     * a fixed, known set of two, not an open-ended map keyed by string.
+     */
+    @Getter
+    @Setter
+    public static class Headers {
+        @NotNull
+        private String requesterId = "X-USER-ID";
+        @NotNull
+        private String requesterName = "X-USER-NAME";
     }
 
     /** Sizing for the dedicated thread pool audit writes are submitted to. */
     @Getter
     @Setter
     public static class Executor {
+        @Min(1)
         private int corePoolSize = 2;
+        @Min(1)
         private int maxPoolSize = 10;
+        @Min(1)
         private int queueCapacity = 500;
 
         /**
@@ -115,6 +145,7 @@ public class AuditLogProperties {
          * timeout are reported via the {@code audit.log.records{outcome=dropped_on_shutdown}}
          * counter rather than being silently discarded.
          */
+        @Min(0)
         private int awaitTerminationSeconds = 30;
     }
 }

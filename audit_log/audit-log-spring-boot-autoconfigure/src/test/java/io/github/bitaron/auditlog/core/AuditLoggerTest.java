@@ -2,7 +2,7 @@ package io.github.bitaron.auditlog.core;
 
 import io.github.bitaron.auditlog.annotation.Audit;
 import io.github.bitaron.auditlog.contract.AuditMetricsRecorder;
-import io.github.bitaron.auditlog.dto.AuditLogClientData;
+import io.github.bitaron.auditlog.model.AuditContext;
 import io.github.bitaron.auditlog.properties.AuditLogProperties;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -32,8 +32,8 @@ class AuditLoggerTest {
     private final AuditLogWriter writer = mock(AuditLogWriter.class);
     private final AuditMetricsRecorder metrics = mock(AuditMetricsRecorder.class);
     private final Audit audit = fixtureAudit();
-    private final AuditLogClientData clientData = new AuditLogClientData(
-            audit, null, null, false, null, new AuditLogProperties(), null, null);
+    private final AuditContext clientData = new AuditContext(
+            null, null, null, null, null, null, null, null, false, 0, null);
 
     @AfterEach
     void clearSynchronization() {

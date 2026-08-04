@@ -3,11 +3,14 @@ package io.github.bitaron.auditlog.core;
 import io.github.bitaron.auditlog.annotation.Audit;
 import io.github.bitaron.auditlog.contract.AuditLogArgumentSerializer;
 import io.github.bitaron.auditlog.contract.AuditLogTemplateResolver;
-import io.github.bitaron.auditlog.dto.AuditLogClientData;
+import io.github.bitaron.auditlog.contract.AuditTemplateSource;
 import io.github.bitaron.auditlog.entity.AuditGroup;
 import io.github.bitaron.auditlog.entity.AuditLog;
-import io.github.bitaron.auditlog.entity.AuditTemplate;
+import io.github.bitaron.auditlog.entity.AuditLogMessage;
+import io.github.bitaron.auditlog.entity.AuditOutcome;
+import io.github.bitaron.auditlog.model.AuditContext;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.NoResultException;
 import jakarta.persistence.TypedQuery;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.transaction.annotation.Propagation;
@@ -18,12 +21,10 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
+import java.util.Optional;
 
 /**
- * Performs the actual persistence of one {@code @Audit} invocation's audit record(s).
+ * Performs the actual persistence of one {@code @Audit} invocation's audit record.
  * <p>
  * Exposes two entry points with different transaction semantics, corresponding to
  * {@link io.github.bitaron.auditlog.properties.AuditLogProperties.DeliveryMode}:
@@ -47,109 +48,128 @@ public class AuditLogWriter {
     private final EntityManager entityManager;
     private final AuditLogTemplateResolver auditLogTemplateResolver;
     private final AuditLogArgumentSerializer auditLogArgumentSerializer;
+    private final List<AuditTemplateSource> auditTemplateSources;
 
     public AuditLogWriter(EntityManager entityManager,
                            AuditLogTemplateResolver auditLogTemplateResolver,
-                           AuditLogArgumentSerializer auditLogArgumentSerializer) {
+                           AuditLogArgumentSerializer auditLogArgumentSerializer,
+                           List<AuditTemplateSource> auditTemplateSources) {
         this.entityManager = entityManager;
         this.auditLogTemplateResolver = auditLogTemplateResolver;
         this.auditLogArgumentSerializer = auditLogArgumentSerializer;
+        this.auditTemplateSources = auditTemplateSources;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void persistRequiresNew(Audit audit, AuditLogClientData clientData) {
-        doPersist(audit, clientData);
+    public void persistRequiresNew(Audit audit, AuditContext auditContext) {
+        doPersist(audit, auditContext);
     }
 
     @Transactional(propagation = Propagation.REQUIRED)
-    public void persistShared(Audit audit, AuditLogClientData clientData) {
-        doPersist(audit, clientData);
+    public void persistShared(Audit audit, AuditContext auditContext) {
+        doPersist(audit, auditContext);
     }
 
-    private void doPersist(Audit audit, AuditLogClientData clientData) {
-        List<String> templateNameList = Arrays.stream(audit.templates())
+    private void doPersist(Audit audit, AuditContext auditContext) {
+        List<String> templateNames = Arrays.stream(audit.templates())
                 .distinct()
                 .toList();
 
-        Map<String, AuditTemplate> templatesByName = templateNameList.isEmpty()
-                ? Map.of()
-                : findTemplatesByName(templateNameList).stream()
-                        .collect(Collectors.toMap(AuditTemplate::getName, Function.identity(), (a, b) -> a));
-
-        List<AuditLog> auditLogList = new ArrayList<>();
-        LocalDateTime currentTime = LocalDateTime.now(ZoneOffset.UTC);
-
-        if (templateNameList.isEmpty()) {
-            // No templates requested: still record that the method ran, just without a rendered message.
-            auditLogList.add(buildAuditLog(audit, clientData, currentTime, null, null));
-        } else {
-            for (String templateName : templateNameList) {
-                AuditTemplate auditTemplate = templatesByName.get(templateName);
-                if (auditTemplate == null) {
-                    log.warn("@Audit references template \"{}\" but no matching audit_template row exists; skipping it",
-                            templateName);
-                    continue;
-                }
-                String message = auditLogTemplateResolver.resolveTemplate(
-                        auditTemplate.getName(), auditTemplate.getTemplate(), clientData);
-                auditLogList.add(buildAuditLog(audit, clientData, currentTime, auditTemplate.getId(), message));
+        List<AuditLogMessage> messages = new ArrayList<>();
+        for (String templateName : templateNames) {
+            Optional<String> templateContent = findTemplate(templateName);
+            if (templateContent.isEmpty()) {
+                log.warn("@Audit references template \"{}\" but no configured AuditTemplateSource resolves it; skipping it",
+                        templateName);
+                continue;
             }
+            String message = auditLogTemplateResolver.resolveTemplate(templateName, templateContent.get(), auditContext);
+            messages.add(buildMessage(templateName, message));
         }
 
-        if (auditLogList.isEmpty()) {
+        // Templates were named but none of them resolved: nothing meaningful to record.
+        if (!templateNames.isEmpty() && messages.isEmpty()) {
             return;
         }
 
-        // Only created once we know at least one audit row will actually be persisted, so
-        // groups no longer accumulate for invocations that end up recording nothing.
-        Long groupId = resolveGroupId(audit);
-        for (AuditLog auditLog : auditLogList) {
-            auditLog.setGroupId(groupId);
-            entityManager.persist(auditLog);
+        AuditLog auditLog = buildAuditLog(audit, auditContext);
+        entityManager.persist(auditLog);
+        for (AuditLogMessage message : messages) {
+            message.setAuditLogId(auditLog.getId());
+            entityManager.persist(message);
         }
     }
 
-    private AuditLog buildAuditLog(Audit audit, AuditLogClientData clientData, LocalDateTime currentTime,
-                                    Long templateId, String message) {
+    private AuditLog buildAuditLog(Audit audit, AuditContext auditContext) {
         AuditLog auditLog = new AuditLog();
         auditLog.setAuditType(audit.auditType());
         auditLog.setActionName(audit.actionName());
         auditLog.setActionType(audit.actionType());
-        auditLog.setActorId(clientData.getActorId());
-        auditLog.setActorName(clientData.getActorName());
-        auditLog.setClientIp(clientData.getClientIp());
-        auditLog.setClientLocation(clientData.getClientLocation());
-        auditLog.setUserAgent(clientData.getUserAgent());
-        auditLog.setCreatedAt(currentTime);
-        auditLog.setTemplateId(templateId);
-        auditLog.setMessage(message);
-        auditLog.setData(serializeData(clientData));
+        auditLog.setActorId(auditContext.actorId());
+        auditLog.setActorName(auditContext.actorName());
+        auditLog.setClientIp(auditContext.clientIp());
+        auditLog.setClientLocation(auditContext.clientLocation());
+        auditLog.setUserAgent(auditContext.userAgent());
+        auditLog.setCreatedAt(LocalDateTime.now(ZoneOffset.UTC));
+        auditLog.setOutcome(auditContext.exceptionThrown() ? AuditOutcome.FAILURE : AuditOutcome.SUCCESS);
+        auditLog.setDurationMs(auditContext.durationMillis());
+        auditLog.setTraceId(auditContext.traceId());
+        auditLog.setData(serializeData(auditContext));
+        auditLog.setGroupId(resolveGroupId(audit));
         return auditLog;
     }
 
-    private String serializeData(AuditLogClientData clientData) {
+    private AuditLogMessage buildMessage(String templateName, String message) {
+        AuditLogMessage auditLogMessage = new AuditLogMessage();
+        auditLogMessage.setTemplateName(templateName);
+        auditLogMessage.setMessage(message);
+        return auditLogMessage;
+    }
+
+    /** Tries every configured {@link AuditTemplateSource} in order, returning the first hit. */
+    private Optional<String> findTemplate(String name) {
+        for (AuditTemplateSource source : auditTemplateSources) {
+            Optional<String> template = source.findTemplate(name);
+            if (template.isPresent()) {
+                return template;
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Serializes only the audited method's arguments and outcome - never the actor/client fields
+     * already recorded as dedicated {@link AuditLog} columns, which would otherwise be duplicated
+     * into {@code data} as a second, independently-driftable source of truth.
+     */
+    private String serializeData(AuditContext auditContext) {
         try {
-            return auditLogArgumentSerializer.serialize(clientData);
+            return auditLogArgumentSerializer.serialize(new AuditLogPayload(
+                    auditContext.args(), auditContext.result(), auditContext.exception(), auditContext.exceptionThrown()));
         } catch (Exception e) {
             log.warn("Argument serializer threw while building the audit log data payload", e);
             return null;
         }
     }
 
+    /** The reuse-by-name is why {@link AuditGroup}'s name column has a unique constraint. */
     private Long resolveGroupId(Audit audit) {
         if (audit.groupName().isEmpty()) {
             return null;
         }
-        AuditGroup auditGroup = new AuditGroup();
-        auditGroup.setName(audit.groupName());
-        entityManager.persist(auditGroup);
-        return auditGroup.getId();
+        try {
+            TypedQuery<Long> query = entityManager.createQuery(
+                    "select g.id from AuditGroup g where g.name = :name", Long.class);
+            query.setParameter("name", audit.groupName());
+            return query.getSingleResult();
+        } catch (NoResultException e) {
+            AuditGroup auditGroup = new AuditGroup();
+            auditGroup.setName(audit.groupName());
+            entityManager.persist(auditGroup);
+            return auditGroup.getId();
+        }
     }
 
-    private List<AuditTemplate> findTemplatesByName(List<String> names) {
-        TypedQuery<AuditTemplate> query = entityManager.createQuery(
-                "select t from AuditTemplate t where t.name in :names", AuditTemplate.class);
-        query.setParameter("names", names);
-        return query.getResultList();
+    private record AuditLogPayload(Object args, Object result, Object exception, boolean exceptionThrown) {
     }
 }

@@ -5,17 +5,26 @@ import io.github.bitaron.auditlog.contract.AuditLogGenericDataGetter;
 import io.github.bitaron.auditlog.contract.AuditLogLocationResolver;
 import io.github.bitaron.auditlog.contract.AuditLogTemplateResolver;
 import io.github.bitaron.auditlog.contract.AuditMetricsRecorder;
+import io.github.bitaron.auditlog.contract.AuditTemplateSource;
+import io.github.bitaron.auditlog.core.AuditContextResolver;
 import io.github.bitaron.auditlog.core.AuditLogAspect;
 import io.github.bitaron.auditlog.core.AuditLogTaskExecutor;
 import io.github.bitaron.auditlog.core.AuditLogWriter;
 import io.github.bitaron.auditlog.core.AuditLogger;
+import io.github.bitaron.auditlog.core.AuditTemplateValidator;
+import io.github.bitaron.auditlog.core.DatabaseAuditTemplateSource;
+import io.github.bitaron.auditlog.core.DefaultAuditContextResolver;
 import io.github.bitaron.auditlog.core.FreemarkerTemplateResolver;
 import io.github.bitaron.auditlog.core.JacksonAuditLogArgumentSerializer;
 import io.github.bitaron.auditlog.core.NoOpAuditMetricsRecorder;
+import io.github.bitaron.auditlog.core.PropertiesAuditTemplateSource;
 import io.github.bitaron.auditlog.properties.AuditLogProperties;
+import io.github.bitaron.auditlog.query.AuditLogQueryService;
+import io.github.bitaron.auditlog.query.JpaAuditLogQueryService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -27,6 +36,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.orm.jpa.SharedEntityManagerCreator;
 
+import java.util.List;
 import java.util.concurrent.Executor;
 
 /**
@@ -89,18 +99,57 @@ public class AuditLogAutoConfiguration {
                 auditMetricsRecorder);
     }
 
-    @Bean
-    @ConditionalOnMissingBean(name = "auditLogEntityManager")
-    public EntityManager auditLogEntityManager(EntityManagerFactory entityManagerFactory) {
+    /**
+     * Deliberately not a {@code @Bean}: Spring Boot registers an {@code EntityManagerFactory},
+     * not an {@code EntityManager} - {@code @PersistenceContext} injection points are handled by
+     * a {@code BeanPostProcessor}, not ordinary bean lookup. Publishing a plain
+     * {@code @Bean EntityManager} would add a bean type to the host application's context that it
+     * never asked for: an unqualified {@code @Autowired EntityManager} in host code would
+     * silently start resolving this starter's shared EntityManager instead of failing loudly (the
+     * correct behavior, since the host has no {@code EntityManager} bean of its own to begin
+     * with), and a host with multiple persistence units would gain an ambiguity it didn't have
+     * before. Neither {@code @Bean(defaultCandidate = false)} (only de-prioritizes a bean when
+     * other same-type candidates exist to prefer instead - a no-op when this would be the only
+     * {@code EntityManager} in the context, the common single-persistence-unit case) nor
+     * {@code @Bean(autowireCandidate = false)} (blocks autowiring entirely, including this
+     * starter's own {@code @Qualifier}-based injection into {@link #auditLogWriter} etc.) gives
+     * "invisible to the host's autowiring, usable by our own beans" - so instead, every internal
+     * consumer below builds its own thin shared-EntityManager proxy directly from the
+     * {@code EntityManagerFactory} bean Spring Boot already provides, and the type
+     * {@code EntityManager} is never registered as a bean at all.
+     */
+    private static EntityManager sharedEntityManager(EntityManagerFactory entityManagerFactory) {
         return SharedEntityManagerCreator.createSharedEntityManager(entityManagerFactory);
+    }
+
+    /** Tried before {@link #databaseAuditTemplateSource} - see {@link PropertiesAuditTemplateSource}. */
+    @Bean
+    @ConditionalOnMissingBean(name = "propertiesAuditTemplateSource")
+    public AuditTemplateSource propertiesAuditTemplateSource(AuditLogProperties auditLogProperties) {
+        return new PropertiesAuditTemplateSource(auditLogProperties);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(name = "databaseAuditTemplateSource")
+    public AuditTemplateSource databaseAuditTemplateSource(EntityManagerFactory entityManagerFactory) {
+        return new DatabaseAuditTemplateSource(sharedEntityManager(entityManagerFactory));
     }
 
     @Bean
     @ConditionalOnMissingBean
-    public AuditLogWriter auditLogWriter(EntityManager auditLogEntityManager,
+    public AuditLogWriter auditLogWriter(EntityManagerFactory entityManagerFactory,
                                           AuditLogTemplateResolver auditLogTemplateResolver,
-                                          AuditLogArgumentSerializer auditLogArgumentSerializer) {
-        return new AuditLogWriter(auditLogEntityManager, auditLogTemplateResolver, auditLogArgumentSerializer);
+                                          AuditLogArgumentSerializer auditLogArgumentSerializer,
+                                          List<AuditTemplateSource> auditTemplateSources) {
+        return new AuditLogWriter(sharedEntityManager(entityManagerFactory), auditLogTemplateResolver,
+                auditLogArgumentSerializer, auditTemplateSources);
+    }
+
+    @Bean
+    @ConditionalOnProperty(prefix = "audit.log", name = "fail-on-missing-template", havingValue = "true")
+    public AuditTemplateValidator auditTemplateValidator(ConfigurableListableBeanFactory beanFactory,
+                                                           List<AuditTemplateSource> auditTemplateSources) {
+        return new AuditTemplateValidator(beanFactory, auditTemplateSources);
     }
 
     @Bean
@@ -112,13 +161,24 @@ public class AuditLogAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public AuditLogAspect auditLogAspect(AuditLogProperties auditLogProperties,
-                                          ObjectProvider<AuditLogGenericDataGetter> auditLogGenericDataGetter,
-                                          ObjectProvider<AuditLogLocationResolver> auditLogLocationResolver,
-                                          AuditLogger auditLogger) {
-        return new AuditLogAspect(auditLogProperties,
+    public AuditContextResolver auditContextResolver(AuditLogProperties auditLogProperties,
+                                                       ObjectProvider<AuditLogGenericDataGetter> auditLogGenericDataGetter,
+                                                       ObjectProvider<AuditLogLocationResolver> auditLogLocationResolver) {
+        return new DefaultAuditContextResolver(
                 auditLogGenericDataGetter.getIfAvailable(),
-                auditLogLocationResolver.getIfAvailable(),
-                auditLogger);
+                auditLogProperties,
+                auditLogLocationResolver.getIfAvailable());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public AuditLogAspect auditLogAspect(AuditContextResolver auditContextResolver, AuditLogger auditLogger) {
+        return new AuditLogAspect(auditContextResolver, auditLogger);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public AuditLogQueryService auditLogQueryService(EntityManagerFactory entityManagerFactory) {
+        return new JpaAuditLogQueryService(sharedEntityManager(entityManagerFactory));
     }
 }

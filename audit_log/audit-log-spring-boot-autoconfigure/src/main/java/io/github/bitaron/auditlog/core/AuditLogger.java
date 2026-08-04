@@ -2,7 +2,7 @@ package io.github.bitaron.auditlog.core;
 
 import io.github.bitaron.auditlog.annotation.Audit;
 import io.github.bitaron.auditlog.contract.AuditMetricsRecorder;
-import io.github.bitaron.auditlog.dto.AuditLogClientData;
+import io.github.bitaron.auditlog.model.AuditContext;
 import io.github.bitaron.auditlog.properties.AuditLogProperties.DeliveryMode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -48,26 +48,26 @@ public class AuditLogger {
         this.mode = mode;
     }
 
-    public void log(Audit audit, AuditLogClientData clientData) {
+    public void log(Audit audit, AuditContext auditContext) {
         if (mode == DeliveryMode.SYNC) {
-            writeShared(audit, clientData);
+            writeShared(audit, auditContext);
             return;
         }
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    dispatch(audit, clientData);
+                    dispatch(audit, auditContext);
                 }
             });
         } else {
-            dispatch(audit, clientData);
+            dispatch(audit, auditContext);
         }
     }
 
-    private void writeShared(Audit audit, AuditLogClientData clientData) {
+    private void writeShared(Audit audit, AuditContext auditContext) {
         try {
-            auditLogWriter.persistShared(audit, clientData);
+            auditLogWriter.persistShared(audit, auditContext);
             metrics.recordWritten();
         } catch (Exception e) {
             metrics.recordFailed();
@@ -75,11 +75,11 @@ public class AuditLogger {
         }
     }
 
-    private void dispatch(Audit audit, AuditLogClientData clientData) {
+    private void dispatch(Audit audit, AuditContext auditContext) {
         try {
             auditLogTaskExecutor.execute(() -> {
                 try {
-                    auditLogWriter.persistRequiresNew(audit, clientData);
+                    auditLogWriter.persistRequiresNew(audit, auditContext);
                     metrics.recordWritten();
                 } catch (Exception e) {
                     metrics.recordFailed();

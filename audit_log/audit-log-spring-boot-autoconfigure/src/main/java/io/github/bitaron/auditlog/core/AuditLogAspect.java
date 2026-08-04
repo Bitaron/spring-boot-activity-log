@@ -4,24 +4,21 @@ package io.github.bitaron.auditlog.core;
 import io.github.bitaron.auditlog.annotation.ActorSource;
 import io.github.bitaron.auditlog.annotation.Audit;
 import io.github.bitaron.auditlog.annotation.AuditIgnore;
-import io.github.bitaron.auditlog.contract.AuditLogGenericDataGetter;
-import io.github.bitaron.auditlog.contract.AuditLogLocationResolver;
-import io.github.bitaron.auditlog.dto.AuditLogClientData;
-import io.github.bitaron.auditlog.properties.AuditLogProperties;
+import io.github.bitaron.auditlog.model.AuditContext;
 import lombok.extern.slf4j.Slf4j;
-import org.aspectj.lang.JoinPoint;
-import org.aspectj.lang.annotation.AfterReturning;
-import org.aspectj.lang.annotation.AfterThrowing;
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.context.expression.MethodBasedEvaluationContext;
 import org.springframework.core.DefaultParameterNameDiscoverer;
+import org.springframework.core.Ordered;
 import org.springframework.core.ParameterNameDiscoverer;
+import org.springframework.core.annotation.Order;
 import org.springframework.expression.EvaluationContext;
 import org.springframework.expression.Expression;
 import org.springframework.expression.ExpressionParser;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
-import org.springframework.web.context.request.RequestContextHolder;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
@@ -35,16 +32,32 @@ import java.util.concurrent.ConcurrentHashMap;
  * This aspect intercepts method executions marked with {@code @Audit} annotations and coordinates the audit logging
  * process through the following flow:
  * <ol>
- *   <li>Captures method arguments and execution outcome (success or exception)</li>
- *   <li>Constructs audit context data using {@link AuditLogClientData}</li>
+ *   <li>Times and invokes the audited method, capturing its arguments, outcome, and duration</li>
+ *   <li>Constructs audit context data using {@link AuditContext}</li>
  *   <li>Delegates logging operations to {@link AuditLogger}</li>
  * </ol>
+ * <p>
+ * Implemented as a single {@link #logMethodAction} {@code @Around} advice, rather than separate
+ * {@code @AfterReturning}/{@code @AfterThrowing} advice, specifically so duration can be measured
+ * around the call - that is not observable from either after-advice alone.
+ * <p>
+ * Actor/client resolution is delegated to {@link AuditContextResolver} - this aspect only
+ * captures what only AOP can see (arguments, return value, exception, duration, the join point)
+ * and evaluates {@link Audit#actorExpression()}.
  *
- * <p><b>Advice Methods:</b>
- * <ul>
- *   <li>{@link #logMethodActionSuccess} - Handles successful method executions</li>
- *   <li>{@link #logMethodActionException} - Handles method executions that throw exceptions</li>
- * </ul>
+ * <p><b>Ordering:</b> explicitly ordered one step ahead of {@link Ordered#LOWEST_PRECEDENCE} -
+ * the default order Spring gives the {@code @Transactional} advisor when
+ * {@code @EnableTransactionManagement} doesn't set one explicitly. Per Spring's advice-ordering
+ * rule ("on the way in, highest precedence runs first; on the way out, highest precedence runs
+ * last" - i.e. highest precedence is the outermost layer), that guarantees this aspect wraps
+ * outside the transactional advice rather than tying with it at the same default order (an
+ * undefined relative order). Wrapping outside means this aspect only builds and dispatches the
+ * audit record once the audited method's own transaction has already committed or rolled back -
+ * so for a directly-annotated {@code @Transactional @Audit} method, the record reflects a
+ * decision that has already been made, rather than one still pending. The commit-aware deferred
+ * dispatch in {@link AuditLogger} still matters for the remaining case: an audited method called
+ * from within a larger transaction further up the call stack that is still open when this
+ * advice's audit logic runs.
  *
  * <p><b>Failure isolation:</b> every step of building and dispatching the audit record is
  * wrapped in a single try/catch that only logs a warning. A failure to record an audit entry -
@@ -60,11 +73,10 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Slf4j
 @Aspect
+@Order(Ordered.LOWEST_PRECEDENCE - 1)
 public class AuditLogAspect {
 
-    private final AuditLogProperties auditLogProperties;
-    private final AuditLogGenericDataGetter auditLogGenericDataGetter;
-    private final AuditLogLocationResolver auditLogLocationResolver;
+    private final AuditContextResolver auditContextResolver;
     private final AuditLogger auditLogger;
 
     private final ExpressionParser expressionParser = new SpelExpressionParser();
@@ -76,38 +88,37 @@ public class AuditLogAspect {
     // distinct @Audit-annotated methods in the application, not by runtime data.
     private final Map<Method, Expression> actorExpressionCache = new ConcurrentHashMap<>();
 
-    public AuditLogAspect(AuditLogProperties auditLogProperties,
-                           AuditLogGenericDataGetter auditLogGenericDataGetter,
-                           AuditLogLocationResolver auditLogLocationResolver,
-                           AuditLogger auditLogger) {
-        this.auditLogProperties = auditLogProperties;
-        this.auditLogGenericDataGetter = auditLogGenericDataGetter;
-        this.auditLogLocationResolver = auditLogLocationResolver;
+    public AuditLogAspect(AuditContextResolver auditContextResolver, AuditLogger auditLogger) {
+        this.auditContextResolver = auditContextResolver;
         this.auditLogger = auditLogger;
     }
 
     /**
-     * Logs successful method executions after normal return.
+     * Invokes the audited method, timing it and recording its outcome regardless of whether it
+     * returns normally or throws. The thrown exception (if any) always propagates to the caller
+     * unchanged - recording a failed attempt must never itself change what the caller sees.
      *
-     * @param joinPoint AspectJ join point providing access to method signature and arguments
+     * @param joinPoint AspectJ join point providing access to method signature, arguments, and
+     *                  the ability to proceed with the actual invocation
      * @param actLog    The {@link Audit} annotation from the intercepted method
-     * @param response  The method's return value
+     * @return whatever the audited method returns
+     * @throws Throwable whatever the audited method throws, unchanged
      */
-    @AfterReturning(pointcut = "@annotation(actLog)", returning = "response")
-    public void logMethodActionSuccess(JoinPoint joinPoint, Audit actLog, Object response) {
-        logActivity(actLog, joinPoint, response, false);
-    }
-
-    /**
-     * Logs failed method executions after exception throw.
-     *
-     * @param joinPoint AspectJ join point providing access to method signature and arguments
-     * @param actLog    The {@link Audit} annotation from the intercepted method
-     * @param response  The thrown exception object
-     */
-    @AfterThrowing(pointcut = "@annotation(actLog)", throwing = "response")
-    public void logMethodActionException(JoinPoint joinPoint, Audit actLog, Object response) {
-        logActivity(actLog, joinPoint, response, true);
+    @Around("@annotation(actLog)")
+    public Object logMethodAction(ProceedingJoinPoint joinPoint, Audit actLog) throws Throwable {
+        long startNanos = System.nanoTime();
+        Object result = null;
+        Throwable thrown = null;
+        try {
+            result = joinPoint.proceed();
+            return result;
+        } catch (Throwable t) {
+            thrown = t;
+            throw t;
+        } finally {
+            long durationMillis = (System.nanoTime() - startNanos) / 1_000_000;
+            logActivity(actLog, joinPoint, thrown != null ? thrown : result, thrown != null, durationMillis);
+        }
     }
 
     /**
@@ -117,20 +128,16 @@ public class AuditLogAspect {
      * @param joinPoint       Method execution context
      * @param response        Method return value or exception
      * @param exceptionThrown Flag indicating execution outcome
+     * @param durationMillis  How long the audited method took to execute (or throw)
      */
-    private void logActivity(Audit actLog, JoinPoint joinPoint, Object response, boolean exceptionThrown) {
+    private void logActivity(Audit actLog, ProceedingJoinPoint joinPoint, Object response, boolean exceptionThrown,
+                              long durationMillis) {
         try {
-            if (RequestContextHolder.getRequestAttributes() == null && auditLogGenericDataGetter == null) {
-                log.debug("No request context and no AuditLogGenericDataGetter configured; "
-                        + "audit record for {} will have null actor/client fields", actLog.auditType());
-            }
             Object args = buildArgs(joinPoint);
             String expressionActor = resolveActorExpression(actLog, joinPoint, response, exceptionThrown);
-            AuditLogClientData auditLogClientData = new AuditLogClientData(
-                    actLog, args, response, exceptionThrown,
-                    this.auditLogGenericDataGetter, this.auditLogProperties, this.auditLogLocationResolver,
-                    expressionActor);
-            auditLogger.log(actLog, auditLogClientData);
+            AuditContext auditContext = auditContextResolver.resolve(
+                    actLog, args, response, exceptionThrown, expressionActor, durationMillis);
+            auditLogger.log(actLog, auditContext);
         } catch (Exception e) {
             log.warn("Failed to record audit log for {}#{}", joinPoint.getSignature().getDeclaringTypeName(),
                     joinPoint.getSignature().getName(), e);
@@ -144,7 +151,7 @@ public class AuditLogAspect {
      * if evaluation fails - a broken expression must not break the audited call, so failures are
      * logged and treated the same as "no actor available" rather than propagated.
      */
-    private String resolveActorExpression(Audit actLog, JoinPoint joinPoint, Object response, boolean exceptionThrown) {
+    private String resolveActorExpression(Audit actLog, ProceedingJoinPoint joinPoint, Object response, boolean exceptionThrown) {
         if (actLog.actorSource() != ActorSource.EXPRESSION || actLog.actorExpression().isEmpty()) {
             return null;
         }
@@ -177,7 +184,7 @@ public class AuditLogAspect {
      * it reaches serialization, and preserves the historical behavior of storing a single
      * argument directly rather than wrapped in a one-element array.
      */
-    private Object buildArgs(JoinPoint joinPoint) {
+    private Object buildArgs(ProceedingJoinPoint joinPoint) {
         Object[] args = joinPoint.getArgs();
         if (args == null || args.length == 0) {
             return null;
@@ -195,7 +202,7 @@ public class AuditLogAspect {
         return filtered.length == 1 ? filtered[0] : filtered;
     }
 
-    private boolean[] resolveIgnoredParameters(JoinPoint joinPoint, int argCount) {
+    private boolean[] resolveIgnoredParameters(ProceedingJoinPoint joinPoint, int argCount) {
         boolean[] ignored = new boolean[argCount];
         if (!(joinPoint.getSignature() instanceof MethodSignature methodSignature)) {
             return ignored;
