@@ -19,6 +19,8 @@ import io.github.bitaron.auditlog.core.JacksonAuditLogArgumentSerializer;
 import io.github.bitaron.auditlog.core.NoOpAuditMetricsRecorder;
 import io.github.bitaron.auditlog.core.PropertiesAuditTemplateSource;
 import io.github.bitaron.auditlog.properties.AuditLogProperties;
+import io.github.bitaron.auditlog.query.AuditLogQueryService;
+import io.github.bitaron.auditlog.query.JpaAuditLogQueryService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -155,5 +157,11 @@ public class AuditLogAutoConfiguration {
     @ConditionalOnMissingBean
     public AuditLogAspect auditLogAspect(AuditContextResolver auditContextResolver, AuditLogger auditLogger) {
         return new AuditLogAspect(auditContextResolver, auditLogger);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public AuditLogQueryService auditLogQueryService(EntityManager auditLogEntityManager) {
+        return new JpaAuditLogQueryService(auditLogEntityManager);
     }
 }

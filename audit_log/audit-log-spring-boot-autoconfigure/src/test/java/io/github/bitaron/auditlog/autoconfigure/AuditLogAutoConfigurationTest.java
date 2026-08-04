@@ -10,6 +10,9 @@ import io.github.bitaron.auditlog.core.AuditLogger;
 import io.github.bitaron.auditlog.core.FreemarkerTemplateResolver;
 import io.github.bitaron.auditlog.entity.AuditLogMessage;
 import io.github.bitaron.auditlog.model.AuditContext;
+import io.github.bitaron.auditlog.query.AuditLogQueryService;
+import io.github.bitaron.auditlog.query.AuditQuery;
+import io.github.bitaron.auditlog.query.AuditRecord;
 import io.github.bitaron.auditlog.testfixtures.host.HostAppMarker;
 import io.github.bitaron.auditlog.testfixtures.host.HostRepository;
 import jakarta.persistence.EntityManager;
@@ -22,6 +25,8 @@ import org.springframework.boot.autoconfigure.transaction.TransactionAutoConfigu
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -155,9 +160,48 @@ class AuditLogAutoConfigurationTest {
                 .run(context -> assertThat(context).hasNotFailed());
     }
 
+    /** Acceptance test for WP6: an invalid executor size fails startup via JSR-303 binding
+     * validation - but only once a validator implementation is actually on the classpath (this
+     * module's own test classpath has hibernate-validator; see the pom.xml comment on why it
+     * isn't a main-scope dependency). */
+    @Test
+    void invalidExecutorPoolSizeFailsStartupValidation() {
+        contextRunner.withPropertyValues("audit.log.executor.core-pool-size=-1")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void queryServiceFiltersByActorIdAndPaginates() {
+        contextRunner.run(context -> {
+            AuditLogWriter writer = context.getBean(AuditLogWriter.class);
+            PlatformTransactionManager transactionManager = context.getBean(PlatformTransactionManager.class);
+            new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                writer.persistRequiresNew(fixtureAuditNoTemplates(), new AuditContext(
+                        "actor-1", "Ada", null, null, null, null, null, null, false, 0, null));
+                writer.persistRequiresNew(fixtureAuditNoTemplates(), new AuditContext(
+                        "actor-2", "Bob", null, null, null, null, null, null, false, 0, null));
+            });
+
+            AuditLogQueryService queryService = context.getBean(AuditLogQueryService.class);
+            Page<AuditRecord> page = queryService.find(
+                    new AuditQuery("actor-1", null, null, null), PageRequest.of(0, 10));
+
+            assertThat(page.getTotalElements()).isEqualTo(1);
+            assertThat(page.getContent().get(0).actorId()).isEqualTo("actor-1");
+        });
+    }
+
     private Audit fixtureAudit() {
+        return fixtureAudit("action");
+    }
+
+    private Audit fixtureAuditNoTemplates() {
+        return fixtureAudit("noTemplates");
+    }
+
+    private Audit fixtureAudit(String methodName) {
         try {
-            Method method = Fixture.class.getDeclaredMethod("action");
+            Method method = Fixture.class.getDeclaredMethod(methodName);
             return method.getAnnotation(Audit.class);
         } catch (NoSuchMethodException e) {
             throw new IllegalStateException(e);
@@ -167,6 +211,10 @@ class AuditLogAutoConfigurationTest {
     private static final class Fixture {
         @Audit(auditType = "test", templates = {"greeting"})
         void action() {
+        }
+
+        @Audit(auditType = "test")
+        void noTemplates() {
         }
     }
 

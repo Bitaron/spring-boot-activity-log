@@ -117,10 +117,40 @@
             <optional>true</optional>
         </dependency>
 
+        <!--
+            "provided", deliberately not transitive: Spring Boot's ConfigurationPropertiesBinder
+            checks whether jakarta.validation.Validator is present on the classpath at all to
+            decide whether to attempt JSR-303 validation on @ConfigurationProperties, and throws
+            NoProviderFoundException if that class is visible but no validator implementation
+            (e.g. hibernate-validator) actually is - so merely having this API on a consuming
+            application's classpath without a provider would turn @Validated on AuditLogProperties
+            from "silently unenforced" into "breaks every application that doesn't happen to have
+            spring-boot-starter-validation". Only needed here at compile time, for the @Min/
+            @NotNull annotations on AuditLogProperties to compile. See spring-boot-starter-test
+            below for how this module's own tests exercise the enforced case with a real validator.
+        -->
+        <dependency>
+            <groupId>jakarta.validation</groupId>
+            <artifactId>jakarta.validation-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- JPA API -->
         <dependency>
             <groupId>jakarta.persistence</groupId>
             <artifactId>jakarta.persistence-api</artifactId>
+        </dependency>
+
+        <!--
+            Only for the Page/Pageable abstraction used by AuditLogQueryService's read API -
+            not Spring Data JPA repositories or JpaRepository (see AuditLogWriter javadoc for why
+            persistence deliberately doesn't use those). "provided": virtually every consuming
+            application already has this transitively via spring-boot-starter-data-jpa.
+        -->
+        <dependency>
+            <groupId>org.springframework.data</groupId>
+            <artifactId>spring-data-commons</artifactId>
+            <scope>provided</scope>
         </dependency>
 
         <!--
@@ -179,6 +209,14 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Test-only validator implementation, so this module's own tests can exercise
+             @Validated actually being enforced (see the pom-level comment on jakarta.validation-api
+             above for why it's not a main-scope dependency). -->
+        <dependency>
+            <groupId>org.hibernate.validator</groupId>
+            <artifactId>hibernate-validator</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

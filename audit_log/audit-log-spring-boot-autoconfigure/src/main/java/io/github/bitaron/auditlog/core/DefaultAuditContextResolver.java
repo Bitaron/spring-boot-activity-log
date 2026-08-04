@@ -17,8 +17,8 @@ import org.springframework.web.context.request.ServletRequestAttributes;
  * from the current HTTP request.
  * <p>
  * <b>Trust model:</b> when no {@link AuditLogGenericDataGetter} bean is configured, the actor
- * identity is read from client-supplied HTTP headers (see
- * {@link AuditLogProperties#getHeaderFor(String)}), and the client IP is trusted from
+ * identity is read from client-supplied HTTP headers (see {@link AuditLogProperties.Headers}),
+ * and the client IP is trusted from
  * {@code X-Forwarded-For}-style headers only when {@code AuditLogProperties.trustForwardedHeaders}
  * is explicitly enabled. Both are spoofable by the caller unless a trusted reverse proxy
  * strips/overwrites them before the request reaches this application. For a verified actor
@@ -96,8 +96,8 @@ public class DefaultAuditContextResolver implements AuditContextResolver {
             String userAgent = request.getHeader("User-Agent");
             String clientLocation = auditLogLocationResolver != null
                     ? auditLogLocationResolver.resolveLocation(clientIp) : null;
-            String actorId = request.getHeader(auditLogProperties.getHeaderFor(AuditLogProperties.REQUESTER_ID));
-            String actorName = request.getHeader(auditLogProperties.getHeaderFor(AuditLogProperties.REQUESTER_NAME));
+            String actorId = request.getHeader(auditLogProperties.getHeaders().getRequesterId());
+            String actorName = request.getHeader(auditLogProperties.getHeaders().getRequesterName());
             return new CommonActor(actorId, actorName, clientIp, clientLocation, userAgent);
         }
         log.warn("No AuditLogGenericDataGetter bean and no HTTP request context available; "
