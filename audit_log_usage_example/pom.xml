@@ -19,18 +19,16 @@
              rather than 25: Lombok doesn't yet support the JDK 25 compiler internals this
              codebase's @Data/@Getter/@Setter usage relies on. -->
         <java.version>21</java.version>
-        <!-- Kept in lockstep with the sibling audit_log module's version (../pom.xml). -->
-        <audit-log.version>1.1.0-SNAPSHOT</audit-log.version>
+        <!-- Kept in lockstep with the sibling audit_log/pom.xml aggregator version. -->
+        <audit-log.version>2.0.0-SNAPSHOT</audit-log.version>
     </properties>
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-aop</artifactId>
-        </dependency>
+        <!-- spring-boot-starter-aop no longer declared here directly: audit-log-spring-boot-starter
+             (below) brings it transitively, the same way any other Boot starter would. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
@@ -81,7 +79,7 @@
         </dependency>
         <dependency>
             <groupId>io.github.bitaron</groupId>
-            <artifactId>audit-log</artifactId>
+            <artifactId>audit-log-spring-boot-starter</artifactId>
             <version>${audit-log.version}</version>
         </dependency>
     </dependencies>

@@ -1,6 +1,6 @@
 package org.commlink.log.audit;
 
-import io.github.bitaron.auditLog.annotation.Audit;
+import io.github.bitaron.auditlog.annotation.Audit;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.Data;
 

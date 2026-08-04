@@ -1,6 +1,6 @@
 package org.commlink.log;
 
-import io.github.bitaron.auditLog.entity.AuditLog;
+import io.github.bitaron.auditlog.entity.AuditLog;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.awaitility.Awaitility;

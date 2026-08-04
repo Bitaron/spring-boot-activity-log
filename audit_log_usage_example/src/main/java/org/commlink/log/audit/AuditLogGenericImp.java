@@ -1,7 +1,7 @@
 package org.commlink.log.audit;
 
 
-import io.github.bitaron.auditLog.contract.AuditLogGenericDataGetter;
+import io.github.bitaron.auditlog.contract.AuditLogGenericDataGetter;
 import org.springframework.stereotype.Service;
 
 /**
