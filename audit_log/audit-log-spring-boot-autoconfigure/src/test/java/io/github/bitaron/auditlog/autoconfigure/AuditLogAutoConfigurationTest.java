@@ -17,8 +17,10 @@ import io.github.bitaron.auditlog.testfixtures.host.HostAppMarker;
 import io.github.bitaron.auditlog.testfixtures.host.HostRepository;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration;
+import org.springframework.boot.context.annotation.ImportCandidates;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration;
 import org.springframework.boot.autoconfigure.transaction.TransactionAutoConfiguration;
@@ -60,6 +62,32 @@ class AuditLogAutoConfigurationTest {
                     TransactionAutoConfiguration.class,
                     JpaRepositoriesAutoConfiguration.class,
                     AuditLogAutoConfiguration.class));
+
+    /**
+     * Guards WP0.3: {@code AutoConfiguration.imports} naming a class that has moved or been
+     * typo'd would still let {@code mvn verify} pass (every other test here loads
+     * {@link AuditLogAutoConfiguration} directly via {@code AutoConfigurations.of(...)}, bypassing
+     * the imports file entirely) while silently making the starter do nothing at all for a real
+     * application relying on classpath auto-configuration discovery - so this test resolves the
+     * file the same way Spring Boot's own {@code @SpringBootApplication} does.
+     */
+    @Test
+    void autoConfigurationImportsFileNamesALoadableClass() {
+        List<String> candidates = ImportCandidates.load(AutoConfiguration.class, getClass().getClassLoader())
+                .getCandidates();
+        assertThat(candidates).contains(AuditLogAutoConfiguration.class.getName());
+        assertThat(candidates).allSatisfy(name ->
+                assertThat(loadable(name)).as("class named in AutoConfiguration.imports: %s", name).isTrue());
+    }
+
+    private boolean loadable(String className) {
+        try {
+            Class.forName(className, false, getClass().getClassLoader());
+            return true;
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
+    }
 
     @Test
     void registersCoreBeansWithNoPropertiesSet() {
