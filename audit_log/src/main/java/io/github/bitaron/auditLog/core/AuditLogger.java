@@ -1,82 +1,39 @@
 package io.github.bitaron.auditLog.core;
 
-import com.google.gson.Gson;
 import io.github.bitaron.auditLog.annotation.Audit;
-import io.github.bitaron.auditLog.contract.AuditLogTemplateResolver;
 import io.github.bitaron.auditLog.dto.AuditLogClientData;
-import io.github.bitaron.auditLog.entity.AuditGroup;
-import io.github.bitaron.auditLog.entity.AuditLog;
-import io.github.bitaron.auditLog.entity.AuditTemplate;
-import io.github.bitaron.auditLog.repository.AuditGroupRepository;
-import io.github.bitaron.auditLog.repository.AuditLogRepository;
-import io.github.bitaron.auditLog.repository.AuditTemplateRepository;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Async;
 
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.concurrent.Executor;
 
+/**
+ * Dispatches audit records to {@link AuditLogWriter} on a dedicated executor, off the caller's
+ * thread and outside the caller's transaction.
+ * <p>
+ * Deliberately not built on {@code @Async}: the previous implementation relied on it, but this
+ * class was constructed with {@code new} inside the aspect rather than as a Spring bean, so the
+ * annotation was never actually proxied and every write ran synchronously on the caller's
+ * thread. Submitting to an explicit {@link Executor} here is simpler and doesn't require the
+ * consuming application to have {@code @EnableAsync} turned on.
+ */
 @Slf4j
 public class AuditLogger {
 
-    AuditLogRepository auditLogRepository;
-    AuditTemplateRepository auditTemplateRepository;
-    AuditGroupRepository auditGroupRepository;
-    AuditLogTemplateResolver auditLogTemplateResolver;
+    private final AuditLogWriter auditLogWriter;
+    private final Executor auditLogTaskExecutor;
 
-
-    public AuditLogger(AuditLogRepository auditLogRepository,
-                       AuditTemplateRepository auditTemplateRepository,
-                       AuditGroupRepository auditGroupRepository,
-                       AuditLogTemplateResolver auditLogTemplateResolver) {
-        this.auditLogRepository = auditLogRepository;
-        this.auditTemplateRepository = auditTemplateRepository;
-        this.auditGroupRepository = auditGroupRepository;
-        this.auditLogTemplateResolver = auditLogTemplateResolver;
+    public AuditLogger(AuditLogWriter auditLogWriter, Executor auditLogTaskExecutor) {
+        this.auditLogWriter = auditLogWriter;
+        this.auditLogTaskExecutor = auditLogTaskExecutor;
     }
 
-    @Async
     public void log(Audit audit, AuditLogClientData clientData) {
-        Gson gson = new Gson();
-        List<String> templateNameList = Arrays.stream(audit.templateNameList()).toList();
-        List<AuditTemplate> auditTemplateList = auditTemplateRepository.findAllByNameIn(
-                templateNameList);
-        Long groupId = null;
-        if (!audit.groupName().isEmpty()) {
-            AuditGroup auditGroup = new AuditGroup();
-            auditGroup.setName(audit.groupName());
-            auditGroupRepository.save(auditGroup);
-            groupId = auditGroup.getId();
-        }
-        List<AuditLog> auditLogList = new ArrayList<>();
-        for (String template : templateNameList) {
-            for (AuditTemplate auditTemplate : auditTemplateList) {
-                if (auditTemplate.getName().equals(template)) {
-
-                    LocalDateTime currentTime = LocalDateTime.now(ZoneOffset.UTC);
-                    String message = auditLogTemplateResolver.resolveTemplate(auditTemplate.getName(),
-                            auditTemplate.getTemplate(), clientData);
-                    AuditLog auditLog = new AuditLog();
-                    auditLog.setAuditType(audit.auditType());
-                    auditLog.setActionName(audit.actionName());
-                    auditLog.setActionType(audit.actionType());
-                    auditLog.setActorId(clientData.getActorId());
-                    auditLog.setActorName(clientData.getActorName());
-                    auditLog.setClientIp(clientData.getClientIp());
-                    auditLog.setClientLocation(clientData.getClientLocation());
-                    auditLog.setUserAgent(clientData.getUserAgent());
-                    auditLog.setCreatedAt(currentTime);
-                    auditLog.setTemplateId(auditTemplate.getId());
-                    auditLog.setMessage(message);
-                    auditLog.setData(gson.toJson(clientData));
-                    auditLog.setGroupId(groupId);
-                    auditLogList.add(auditLog);
-                }
+        auditLogTaskExecutor.execute(() -> {
+            try {
+                auditLogWriter.persist(audit, clientData);
+            } catch (Exception e) {
+                log.warn("Failed to persist audit log entry for auditType={}", audit.auditType(), e);
             }
-        }
-        auditLogRepository.saveAll(auditLogList);
+        });
     }
 }

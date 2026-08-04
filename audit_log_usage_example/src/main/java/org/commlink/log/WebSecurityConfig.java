@@ -11,6 +11,11 @@ import org.springframework.security.web.SecurityFilterChain;
 @EnableAsync
 public class WebSecurityConfig {
 
+    /**
+     * Demo-only: permits every request and disables CSRF so the sample endpoints are reachable
+     * without setting up authentication. Do not carry this into a real application - lock down
+     * {@code authorizeHttpRequests} and re-enable CSRF for any state-changing endpoint.
+     */
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http

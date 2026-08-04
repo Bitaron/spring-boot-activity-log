@@ -7,6 +7,9 @@ import lombok.Setter;
 @Getter
 @Setter
 @Entity
+@Table(name = "audit_template", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_audit_template_name", columnNames = "name")
+})
 public class AuditTemplate {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -14,9 +17,9 @@ public class AuditTemplate {
     @Column(name = "id")
     private Long id;
 
-    @Column(name = "name")
+    @Column(name = "name", nullable = false)
     private String name;
 
-    @Column(name = "template")
+    @Column(name = "template", length = 4000)
     private String template;
 }

@@ -9,9 +9,23 @@ import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
 
+/**
+ * One persisted audit record, produced by an {@code @Audit}-annotated method invocation matching
+ * a single template (or, when the invocation requested no templates, a single default record).
+ * <p>
+ * The {@link #data} column requires a JSON-capable Hibernate dialect for
+ * {@code @JdbcTypeCode(SqlTypes.JSON)} to map correctly (PostgreSQL, MySQL 5.7+, and H2 in
+ * PostgreSQL-compatibility mode all qualify). On a dialect without native JSON support, switch
+ * this to a plain {@code @Lob} text column.
+ */
 @Getter
 @Setter
 @Entity
+@Table(name = "audit_log", indexes = {
+        @Index(name = "idx_audit_log_created_at", columnList = "created_at"),
+        @Index(name = "idx_audit_log_actor_id", columnList = "actor_id"),
+        @Index(name = "idx_audit_log_audit_type", columnList = "audit_type")
+})
 public class AuditLog {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -22,7 +36,7 @@ public class AuditLog {
     @Column(name = "audit_type")
     private String auditType;
 
-    @Column(name = "user_id")
+    @Column(name = "actor_id")
     private String actorId;
 
     @Column(name = "actor_name")
@@ -53,7 +67,7 @@ public class AuditLog {
     @Column(name = "template_id")
     private Long templateId;
 
-    @Column(name = "message")
+    @Column(name = "message", length = 4000)
     private String message;
 
     @Column(name = "group_id")

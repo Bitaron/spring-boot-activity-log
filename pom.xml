@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>io.github.bitaron</groupId>
+    <artifactId>spring-boot-activity-log-parent</artifactId>
+    <version>1.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>Spring Boot Activity Log - Aggregator</name>
+    <description>Aggregator build for the audit-log starter and its usage example</description>
+    <url>https://github.com/Bitaron/spring-boot-activity-log</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>Bitaron</id>
+            <name>Sk. Kamruzzaman</name>
+            <email>bitaron90@gmail.com</email>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:git://github.com/Bitaron/spring-boot-activity-log</connection>
+        <developerConnection>scm:git:ssh://github.com:Bitaron/spring-boot-activity-log.git</developerConnection>
+        <url>https://github.com/Bitaron/spring-boot-activity-log</url>
+    </scm>
+
+    <!--
+        Java 21 (current LTS), not the newer 25: Lombok 1.18.46 (the latest published release as
+        of this build) does not yet generate members under JDK 25, it silently produces empty
+        classes with no error, since its javac AST integration hasn't been updated for JDK 25's
+        compiler internals yet. Verified directly: the exact same source compiles correctly with
+        full Lombok output targeting release 21 and produces empty stub classes targeting release
+        25, even with the standard add-exports/add-opens workaround for javac's internal
+        packages. Revisit once Lombok ships JDK 25 support.
+    -->
+    <properties>
+        <java.version>21</java.version>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <spring-boot.version>3.5.16</spring-boot.version>
+    </properties>
+
+    <!--
+        Single source of truth for Spring/Hibernate/etc. versions. Both modules previously
+        pinned overlapping dependency versions independently (spring-boot-starter-web 3.4.5,
+        spring-boot-autoconfigure 3.4.2, spring-context 6.2.2 in audit_log; spring-boot-starter-
+        parent 3.4.2 in the example) which drifted out of sync with each other. Importing the
+        Spring Boot BOM here means every module that inherits from this parent gets one
+        consistent, tested set of versions.
+    -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <modules>
+        <module>audit_log</module>
+        <module>audit_log_usage_example</module>
+    </modules>
+</project>

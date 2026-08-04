@@ -15,25 +15,25 @@ import java.io.Serializable;
 public class AuditLogTestController {
 
     @Audit(auditType = "test", actionName = "test-action", actionType = "test-type",
-            templateNameList={"test_template"})
+            templateNameList = {"test_template"})
     @GetMapping("/test")
-    public ResponseEntity test(HttpServletRequest request) throws InterruptedException {
-        TestData testData = getTestData();
-        //   useAnnotationException(testData, request);
-        return useAnnotationValid(testData, request);
-
-    }
-
-    public void useAnnotationException(TestData testData, HttpServletRequest request) throws InterruptedException {
-        throw new RuntimeException("Test exception");
-    }
-
-
-    public ResponseEntity useAnnotationValid(TestData testData, HttpServletRequest request) throws InterruptedException {
+    public ResponseEntity<Response> test(HttpServletRequest request) {
         return ResponseEntity.ok(new Response(10, getTestData()));
     }
 
-    public static TestData getTestData() {
+    /**
+     * Demonstrates the {@code @AfterThrowing} advice path: the exception propagates to the
+     * caller as a 500 exactly as it would without the starter, and a second audit_log row is
+     * recorded via {@code logMethodActionException} regardless.
+     */
+    @Audit(auditType = "test", actionName = "test-action-fail", actionType = "test-type",
+            templateNameList = {"test_template"})
+    @GetMapping("/test/fail")
+    public ResponseEntity<Response> testFail(HttpServletRequest request) {
+        throw new RuntimeException("Test exception");
+    }
+
+    private static TestData getTestData() {
         TestData.L2 l2 = new TestData.L2("l2_data");
         TestData.L1 l1 = new TestData.L1(l2, "l1_data");
         return new TestData(l1, "test");

@@ -11,36 +11,62 @@ import io.github.bitaron.auditLog.dto.AuditLogClientData;
 import java.io.IOException;
 import java.io.StringReader;
 import java.io.StringWriter;
+import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
+/**
+ * Default {@link AuditLogTemplateResolver}, backed by FreeMarker.
+ * <p>
+ * <b>Trust boundary:</b> templates are stored in the {@code audit_template} database table and
+ * executed as FreeMarker templates against the audited method's arguments/response. This
+ * configuration disables the {@code ?api} built-in and uses
+ * {@link TemplateClassResolver#SAFER_RESOLVER} to block reflective escapes into arbitrary
+ * classes, but write access to {@code audit_template} is still effectively the ability to
+ * execute template logic in this process - restrict who can write to that table the same way
+ * you would restrict deploy access.
+ */
 public class FreemarkerTemplateResolver implements AuditLogTemplateResolver {
 
-    // FreeMarker configuration (thread-safe)
     private static final Configuration FREEMARKER_CONFIG;
 
     static {
         FREEMARKER_CONFIG = new Configuration(Configuration.VERSION_2_3_34);
         FREEMARKER_CONFIG.setDefaultEncoding("UTF-8");
         FREEMARKER_CONFIG.setTemplateExceptionHandler(TemplateExceptionHandler.RETHROW_HANDLER);
-        FREEMARKER_CONFIG.setLogTemplateExceptions(false);
         FREEMARKER_CONFIG.setNewBuiltinClassResolver(TemplateClassResolver.SAFER_RESOLVER);
         FREEMARKER_CONFIG.setAPIBuiltinEnabled(false);  // Disable ?api
-        FREEMARKER_CONFIG.setLogTemplateExceptions(true); // Log errors
+        FREEMARKER_CONFIG.setLogTemplateExceptions(true);
     }
+
+    // Parsing a FreeMarker template compiles it into an AST; re-parsing identical template text
+    // on every single @Audit invocation is wasted work under load, so compiled templates are
+    // cached by name + content hash - the hash guards against a template being edited in the
+    // audit_template table without a name change.
+    private final ConcurrentMap<String, Template> compiledTemplates = new ConcurrentHashMap<>();
 
     @Override
     public String resolveTemplate(String name, String template, AuditLogClientData dto) {
-        try (StringReader reader = new StringReader(template)) {
-            Template freemarkerTemplate = new Template(name, reader,
-                    FREEMARKER_CONFIG);
+        try {
+            Template freemarkerTemplate = compiledTemplates.computeIfAbsent(
+                    cacheKey(name, template), key -> compile(name, template));
             StringWriter writer = new StringWriter();
-
-            // Process the template with the DTO as the data model
             freemarkerTemplate.process(dto, writer);
             return writer.toString();
-
-        } catch (IOException | TemplateException e) {
-            throw new RuntimeException("Failed to resolve audit log template", e);
+        } catch (TemplateException | IOException e) {
+            throw new RuntimeException("Failed to resolve audit log template \"" + name + "\"", e);
         }
     }
-}
 
+    private Template compile(String name, String template) {
+        try (StringReader reader = new StringReader(template)) {
+            return new Template(name, reader, FREEMARKER_CONFIG);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to parse audit log template \"" + name + "\"", e);
+        }
+    }
+
+    private String cacheKey(String name, String template) {
+        return name + "#" + Objects.hashCode(template);
+    }
+}

@@ -2,20 +2,21 @@ package io.github.bitaron.auditLog.core;
 
 
 import io.github.bitaron.auditLog.annotation.Audit;
+import io.github.bitaron.auditLog.annotation.AuditIgnore;
 import io.github.bitaron.auditLog.contract.AuditLogGenericDataGetter;
-import io.github.bitaron.auditLog.contract.AuditLogTemplateResolver;
+import io.github.bitaron.auditLog.contract.AuditLogLocationResolver;
 import io.github.bitaron.auditLog.dto.AuditLogClientData;
 import io.github.bitaron.auditLog.properties.AuditLogProperties;
-import io.github.bitaron.auditLog.repository.AuditGroupRepository;
-import io.github.bitaron.auditLog.repository.AuditLogRepository;
-import io.github.bitaron.auditLog.repository.AuditTemplateRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.JoinPoint;
 import org.aspectj.lang.annotation.AfterReturning;
 import org.aspectj.lang.annotation.AfterThrowing;
 import org.aspectj.lang.annotation.Aspect;
-import org.springframework.stereotype.Component;
+import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.web.context.request.RequestContextHolder;
+
+import java.lang.annotation.Annotation;
+import java.lang.reflect.Method;
 
 
 /**
@@ -35,12 +36,10 @@ import org.springframework.web.context.request.RequestContextHolder;
  *   <li>{@link #logMethodActionException} - Handles method executions that throw exceptions</li>
  * </ul>
  *
- * <p><b>Dependencies:</b>
- * <ul>
- *   <li>{@link AuditLogGenericDataGetter} - Provides environmental/contextual audit data</li>
- *   <li>{@link AuditLogRepository} - Handles audit record persistence</li>
- *   <li>{@link AuditLogTemplateResolver} - Formats audit data for storage</li>
- * </ul>
+ * <p><b>Failure isolation:</b> every step of building and dispatching the audit record is
+ * wrapped in a single try/catch that only logs a warning. A failure to record an audit entry -
+ * a bad template, an unserializable argument, a database error - must never turn a successful
+ * (or already-failing) business call into an unrelated failure.
  *
  * <p><b>Thread Safety:</b> This aspect is typically configured as a Spring singleton bean. All dependencies should be
  * thread-safe when used in concurrent environments.
@@ -51,31 +50,21 @@ import org.springframework.web.context.request.RequestContextHolder;
  */
 @Slf4j
 @Aspect
-@Component
 public class AuditLogAspect {
 
-    private AuditLogger auditLogger;
-    private AuditLogGenericDataGetter auditLogGenericDataGetter;
-    private AuditLogProperties auditLogProperties;
+    private final AuditLogProperties auditLogProperties;
+    private final AuditLogGenericDataGetter auditLogGenericDataGetter;
+    private final AuditLogLocationResolver auditLogLocationResolver;
+    private final AuditLogger auditLogger;
 
-
-    /**
-     * Constructs the audit aspect with required dependencies.
-     *
-     * @param auditLogGenericDataGetter Provides generic audit context information
-     * @param auditLogRepository        Repository for persisting audit records
-     * @param auditLogTemplateResolver  Template engine for formatting log entries
-     */
     public AuditLogAspect(AuditLogProperties auditLogProperties,
-                          AuditLogGenericDataGetter auditLogGenericDataGetter,
-                          AuditLogRepository auditLogRepository,
-                          AuditTemplateRepository auditTemplateRepository,
-                          AuditGroupRepository auditGroupRepository,
-                          AuditLogTemplateResolver auditLogTemplateResolver) {
-        this.auditLogGenericDataGetter = auditLogGenericDataGetter;
+                           AuditLogGenericDataGetter auditLogGenericDataGetter,
+                           AuditLogLocationResolver auditLogLocationResolver,
+                           AuditLogger auditLogger) {
         this.auditLogProperties = auditLogProperties;
-        this.auditLogger = new AuditLogger(auditLogRepository, auditTemplateRepository,
-                auditGroupRepository, auditLogTemplateResolver);
+        this.auditLogGenericDataGetter = auditLogGenericDataGetter;
+        this.auditLogLocationResolver = auditLogLocationResolver;
+        this.auditLogger = auditLogger;
     }
 
     /**
@@ -111,16 +100,60 @@ public class AuditLogAspect {
      * @param exceptionThrown Flag indicating execution outcome
      */
     private void logActivity(Audit actLog, JoinPoint joinPoint, Object response, boolean exceptionThrown) {
-
-        if (RequestContextHolder.getRequestAttributes() == null && auditLogGenericDataGetter == null) {
-            log.info("No source found for getting requester info");
+        try {
+            if (RequestContextHolder.getRequestAttributes() == null && auditLogGenericDataGetter == null) {
+                log.debug("No request context and no AuditLogGenericDataGetter configured; "
+                        + "audit record for {} will have null actor/client fields", actLog.auditType());
+            }
+            Object args = buildArgs(joinPoint);
+            AuditLogClientData auditLogClientData = new AuditLogClientData(
+                    actLog, args, response, exceptionThrown,
+                    this.auditLogGenericDataGetter, this.auditLogProperties, this.auditLogLocationResolver);
+            auditLogger.log(actLog, auditLogClientData);
+        } catch (Exception e) {
+            log.warn("Failed to record audit log for {}#{}", joinPoint.getSignature().getDeclaringTypeName(),
+                    joinPoint.getSignature().getName(), e);
         }
-        AuditLogClientData auditLogClientData = new AuditLogClientData(
-                actLog,
-                joinPoint.getArgs(), response,
-                exceptionThrown,
-                this.auditLogGenericDataGetter,
-                this.auditLogProperties);
-        auditLogger.log(actLog, auditLogClientData);
+    }
+
+    /**
+     * Replaces the value of any parameter annotated {@link AuditIgnore} with a placeholder before
+     * it reaches serialization, and preserves the historical behavior of storing a single
+     * argument directly rather than wrapped in a one-element array.
+     */
+    private Object buildArgs(JoinPoint joinPoint) {
+        Object[] args = joinPoint.getArgs();
+        if (args == null || args.length == 0) {
+            return null;
+        }
+        boolean[] ignored = resolveIgnoredParameters(joinPoint, args.length);
+        Object[] filtered = args;
+        for (int i = 0; i < args.length; i++) {
+            if (ignored[i]) {
+                if (filtered == args) {
+                    filtered = args.clone();
+                }
+                filtered[i] = "***ignored***";
+            }
+        }
+        return filtered.length == 1 ? filtered[0] : filtered;
+    }
+
+    private boolean[] resolveIgnoredParameters(JoinPoint joinPoint, int argCount) {
+        boolean[] ignored = new boolean[argCount];
+        if (!(joinPoint.getSignature() instanceof MethodSignature methodSignature)) {
+            return ignored;
+        }
+        Method method = methodSignature.getMethod();
+        Annotation[][] parameterAnnotations = method.getParameterAnnotations();
+        for (int i = 0; i < Math.min(argCount, parameterAnnotations.length); i++) {
+            for (Annotation annotation : parameterAnnotations[i]) {
+                if (annotation instanceof AuditIgnore) {
+                    ignored[i] = true;
+                    break;
+                }
+            }
+        }
+        return ignored;
     }
 }

@@ -2,9 +2,11 @@ package io.github.bitaron.auditLog.dto;
 
 import io.github.bitaron.auditLog.annotation.Audit;
 import io.github.bitaron.auditLog.contract.AuditLogGenericDataGetter;
+import io.github.bitaron.auditLog.contract.AuditLogLocationResolver;
 import io.github.bitaron.auditLog.properties.AuditLogProperties;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.Data;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -20,14 +22,25 @@ import org.springframework.web.context.request.ServletRequestAttributes;
  * </ul>
  *
  * <p>Instances are typically created by the audit framework during method interception and
- * passed to {@link io.github.bitaron.auditLog.contract.AuditLogDataGetter#getData(AuditLogClientData)} for audit log generation.
+ * passed to {@link io.github.bitaron.auditLog.contract.AuditLogTemplateResolver#resolveTemplate}
+ * for audit log message generation.
+ *
+ * <p><b>Trust model:</b> when no {@link AuditLogGenericDataGetter} bean is configured, the actor
+ * identity is read from client-supplied HTTP headers (see
+ * {@link AuditLogProperties#getHeaderFor(String)}), and the client IP is trusted from
+ * {@code X-Forwarded-For}-style headers only when {@code AuditLogProperties.trustForwardedHeaders}
+ * is explicitly enabled. Both are spoofable by the caller unless a trusted reverse proxy
+ * strips/overwrites them before the request reaches this application. For a verified actor
+ * identity, supply an {@link AuditLogGenericDataGetter} backed by your authentication mechanism
+ * (e.g. {@code SecurityContextHolder}) instead of relying on the header defaults.
  *
  * <p><b>Thread Safety:</b> This class is not thread-safe and should only be used within
  * the context of a single method invocation.
  *
  * @see io.github.bitaron.auditLog.annotation.Audit
- * @see io.github.bitaron.auditLog.contract.AuditLogDataGetter
+ * @see io.github.bitaron.auditLog.contract.AuditLogTemplateResolver
  */
+@Slf4j
 @Data
 public class AuditLogClientData {
     /**
@@ -84,36 +97,23 @@ public class AuditLogClientData {
      *                        {@code false} for successful execution
      */
     public AuditLogClientData(Audit audit, Object args, Object response, boolean exceptionThrown,
-                              AuditLogGenericDataGetter auditLogGenericDataGetter,
-                              AuditLogProperties auditLogProperties) {
+                               AuditLogGenericDataGetter auditLogGenericDataGetter,
+                               AuditLogProperties auditLogProperties,
+                               AuditLogLocationResolver auditLogLocationResolver) {
         if (audit.isActorSystem()) {
+            this.actorId = "SYSTEM";
             this.actorName = "SYSTEM";
         } else if (audit.isActorCommon()) {
-            if (auditLogGenericDataGetter == null && RequestContextHolder.getRequestAttributes() != null) {
-                HttpServletRequest request =
-                        ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes())
-                                .getRequest();
-                this.clientIp = getClientIP(request);
-                this.userAgent = request.getHeader("User-Agent");
-                this.clientLocation = getLocationFromIP(this.clientIp);
-                this.actorId = request.getHeader(auditLogProperties.getHeaderFor(AuditLogProperties.REQUESTER_ID));
-                this.actorName = request.getHeader(auditLogProperties.getHeaderFor(AuditLogProperties.REQUESTER_NAME));
-            } else if (auditLogGenericDataGetter != null) {
-                this.clientIp = auditLogGenericDataGetter.getClientIp();
-                this.userAgent = auditLogGenericDataGetter.getUserAgent();
-                this.clientLocation = auditLogGenericDataGetter.getClientLocation();
-                this.actorId = auditLogGenericDataGetter.getActorId();
-                this.actorName = auditLogGenericDataGetter.getActorName();
-            }
+            resolveCommonActor(auditLogGenericDataGetter, auditLogProperties, auditLogLocationResolver);
+        } else if (response instanceof AuditLogGenericDataGetter dataGetter) {
+            this.clientIp = dataGetter.getClientIp();
+            this.userAgent = dataGetter.getUserAgent();
+            this.clientLocation = dataGetter.getClientLocation();
+            this.actorId = dataGetter.getActorId();
+            this.actorName = dataGetter.getActorName();
         } else {
-            if (response instanceof AuditLogGenericDataGetter) {
-                AuditLogGenericDataGetter dataGetter = (AuditLogGenericDataGetter) response;
-                this.clientIp = dataGetter.getClientIp();
-                this.userAgent = dataGetter.getUserAgent();
-                this.clientLocation = dataGetter.getClientLocation();
-                this.actorId = dataGetter.getActorId();
-                this.actorName = dataGetter.getActorName();
-            }
+            log.warn("@Audit(isActorCommon=false) but the method's return value does not implement "
+                    + "AuditLogGenericDataGetter; actor fields will be null for this audit record");
         }
         this.args = args;
         this.exceptionThrown = exceptionThrown;
@@ -124,24 +124,50 @@ public class AuditLogClientData {
         }
     }
 
-    // Get client IP (handles proxies like Nginx or Cloudflare)
-    private String getClientIP(HttpServletRequest request) {
-        String ip = request.getHeader("X-Forwarded-For");
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getHeader("Proxy-Client-IP");
+    private void resolveCommonActor(AuditLogGenericDataGetter auditLogGenericDataGetter,
+                                     AuditLogProperties auditLogProperties,
+                                     AuditLogLocationResolver auditLogLocationResolver) {
+        if (auditLogGenericDataGetter != null) {
+            this.clientIp = auditLogGenericDataGetter.getClientIp();
+            this.userAgent = auditLogGenericDataGetter.getUserAgent();
+            this.clientLocation = auditLogGenericDataGetter.getClientLocation();
+            this.actorId = auditLogGenericDataGetter.getActorId();
+            this.actorName = auditLogGenericDataGetter.getActorName();
+            return;
         }
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getHeader("WL-Proxy-Client-IP");
+        if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes servletAttributes) {
+            HttpServletRequest request = servletAttributes.getRequest();
+            this.clientIp = getClientIP(request, auditLogProperties.isTrustForwardedHeaders());
+            this.userAgent = request.getHeader("User-Agent");
+            this.clientLocation = auditLogLocationResolver != null
+                    ? auditLogLocationResolver.resolveLocation(this.clientIp) : null;
+            this.actorId = request.getHeader(auditLogProperties.getHeaderFor(AuditLogProperties.REQUESTER_ID));
+            this.actorName = request.getHeader(auditLogProperties.getHeaderFor(AuditLogProperties.REQUESTER_NAME));
+            return;
         }
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getRemoteAddr();
-        }
-        return ip.split(",")[0].trim(); // Handle multiple IPs in X-Forwarded-For
+        log.warn("No AuditLogGenericDataGetter bean and no HTTP request context available; "
+                + "actor/client fields will be null for this audit record");
     }
 
-    // Example: Simple IP-to-location lookup (requires a geolocation service/database)
-    private String getLocationFromIP(String ip) {
-        // Replace with actual implementation (e.g., MaxMind GeoIP2, IPAPI, etc.)
-        return "Unknown Location (Demo)";
+    // Get client IP (handles proxies like Nginx or Cloudflare) - only when explicitly trusted,
+    // since these headers are otherwise attacker-controlled (see class javadoc "Trust model").
+    private String getClientIP(HttpServletRequest request, boolean trustForwardedHeaders) {
+        if (trustForwardedHeaders) {
+            String ip = firstNonBlank(request.getHeader("X-Forwarded-For"),
+                    request.getHeader("Proxy-Client-IP"), request.getHeader("WL-Proxy-Client-IP"));
+            if (ip != null) {
+                return ip.split(",")[0].trim(); // Handle multiple IPs in X-Forwarded-For
+            }
+        }
+        return request.getRemoteAddr();
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank() && !"unknown".equalsIgnoreCase(value)) {
+                return value;
+            }
+        }
+        return null;
     }
 }
