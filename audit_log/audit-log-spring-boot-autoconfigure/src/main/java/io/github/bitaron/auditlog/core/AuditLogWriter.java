@@ -3,11 +3,11 @@ package io.github.bitaron.auditlog.core;
 import io.github.bitaron.auditlog.annotation.Audit;
 import io.github.bitaron.auditlog.contract.AuditLogArgumentSerializer;
 import io.github.bitaron.auditlog.contract.AuditLogTemplateResolver;
+import io.github.bitaron.auditlog.contract.AuditTemplateSource;
 import io.github.bitaron.auditlog.entity.AuditGroup;
 import io.github.bitaron.auditlog.entity.AuditLog;
 import io.github.bitaron.auditlog.entity.AuditLogMessage;
 import io.github.bitaron.auditlog.entity.AuditOutcome;
-import io.github.bitaron.auditlog.entity.AuditTemplate;
 import io.github.bitaron.auditlog.model.AuditContext;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.NoResultException;
@@ -21,9 +21,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
+import java.util.Optional;
 
 /**
  * Performs the actual persistence of one {@code @Audit} invocation's audit record.
@@ -50,13 +48,16 @@ public class AuditLogWriter {
     private final EntityManager entityManager;
     private final AuditLogTemplateResolver auditLogTemplateResolver;
     private final AuditLogArgumentSerializer auditLogArgumentSerializer;
+    private final List<AuditTemplateSource> auditTemplateSources;
 
     public AuditLogWriter(EntityManager entityManager,
                            AuditLogTemplateResolver auditLogTemplateResolver,
-                           AuditLogArgumentSerializer auditLogArgumentSerializer) {
+                           AuditLogArgumentSerializer auditLogArgumentSerializer,
+                           List<AuditTemplateSource> auditTemplateSources) {
         this.entityManager = entityManager;
         this.auditLogTemplateResolver = auditLogTemplateResolver;
         this.auditLogArgumentSerializer = auditLogArgumentSerializer;
+        this.auditTemplateSources = auditTemplateSources;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -74,22 +75,16 @@ public class AuditLogWriter {
                 .distinct()
                 .toList();
 
-        Map<String, AuditTemplate> templatesByName = templateNames.isEmpty()
-                ? Map.of()
-                : findTemplatesByName(templateNames).stream()
-                        .collect(Collectors.toMap(AuditTemplate::getName, Function.identity(), (a, b) -> a));
-
         List<AuditLogMessage> messages = new ArrayList<>();
         for (String templateName : templateNames) {
-            AuditTemplate auditTemplate = templatesByName.get(templateName);
-            if (auditTemplate == null) {
-                log.warn("@Audit references template \"{}\" but no matching audit_template row exists; skipping it",
+            Optional<String> templateContent = findTemplate(templateName);
+            if (templateContent.isEmpty()) {
+                log.warn("@Audit references template \"{}\" but no configured AuditTemplateSource resolves it; skipping it",
                         templateName);
                 continue;
             }
-            String message = auditLogTemplateResolver.resolveTemplate(
-                    auditTemplate.getName(), auditTemplate.getTemplate(), auditContext);
-            messages.add(buildMessage(auditTemplate.getId(), message));
+            String message = auditLogTemplateResolver.resolveTemplate(templateName, templateContent.get(), auditContext);
+            messages.add(buildMessage(templateName, message));
         }
 
         // Templates were named but none of them resolved: nothing meaningful to record.
@@ -124,11 +119,22 @@ public class AuditLogWriter {
         return auditLog;
     }
 
-    private AuditLogMessage buildMessage(Long templateId, String message) {
+    private AuditLogMessage buildMessage(String templateName, String message) {
         AuditLogMessage auditLogMessage = new AuditLogMessage();
-        auditLogMessage.setTemplateId(templateId);
+        auditLogMessage.setTemplateName(templateName);
         auditLogMessage.setMessage(message);
         return auditLogMessage;
+    }
+
+    /** Tries every configured {@link AuditTemplateSource} in order, returning the first hit. */
+    private Optional<String> findTemplate(String name) {
+        for (AuditTemplateSource source : auditTemplateSources) {
+            Optional<String> template = source.findTemplate(name);
+            if (template.isPresent()) {
+                return template;
+            }
+        }
+        return Optional.empty();
     }
 
     /**
@@ -146,7 +152,7 @@ public class AuditLogWriter {
         }
     }
 
-    /** The reuse-by-name is why {@link AuditGroup#getName()} has a unique constraint. */
+    /** The reuse-by-name is why {@link AuditGroup}'s name column has a unique constraint. */
     private Long resolveGroupId(Audit audit) {
         if (audit.groupName().isEmpty()) {
             return null;
@@ -162,13 +168,6 @@ public class AuditLogWriter {
             entityManager.persist(auditGroup);
             return auditGroup.getId();
         }
-    }
-
-    private List<AuditTemplate> findTemplatesByName(List<String> names) {
-        TypedQuery<AuditTemplate> query = entityManager.createQuery(
-                "select t from AuditTemplate t where t.name in :names", AuditTemplate.class);
-        query.setParameter("names", names);
-        return query.getResultList();
     }
 
     private record AuditLogPayload(Object args, Object result, Object exception, boolean exceptionThrown) {

@@ -1,5 +1,6 @@
 package io.github.bitaron.auditlog.autoconfigure;
 
+import io.github.bitaron.auditlog.annotation.Audit;
 import io.github.bitaron.auditlog.contract.AuditLogArgumentSerializer;
 import io.github.bitaron.auditlog.contract.AuditLogGenericDataGetter;
 import io.github.bitaron.auditlog.contract.AuditLogTemplateResolver;
@@ -7,9 +8,11 @@ import io.github.bitaron.auditlog.core.AuditLogAspect;
 import io.github.bitaron.auditlog.core.AuditLogWriter;
 import io.github.bitaron.auditlog.core.AuditLogger;
 import io.github.bitaron.auditlog.core.FreemarkerTemplateResolver;
+import io.github.bitaron.auditlog.entity.AuditLogMessage;
 import io.github.bitaron.auditlog.model.AuditContext;
 import io.github.bitaron.auditlog.testfixtures.host.HostAppMarker;
 import io.github.bitaron.auditlog.testfixtures.host.HostRepository;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration;
@@ -19,6 +22,11 @@ import org.springframework.boot.autoconfigure.transaction.TransactionAutoConfigu
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.lang.reflect.Method;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -100,6 +108,80 @@ class AuditLogAutoConfigurationTest {
             // And the starter's own repository-free persistence path still works alongside it.
             assertThat(context).hasSingleBean(AuditLogWriter.class);
         });
+    }
+
+    /** Acceptance test for WP5: a template defined only in configuration renders with no
+     * matching {@code audit_template} database row present at all. */
+    @Test
+    void propertiesTemplateResolvesWithoutDatabaseRow() {
+        contextRunner.withPropertyValues("audit.log.templates.greeting=Hello ${actorName}!").run(context -> {
+            assertThat(context).hasNotFailed();
+            AuditLogWriter writer = context.getBean(AuditLogWriter.class);
+            PlatformTransactionManager transactionManager = context.getBean(PlatformTransactionManager.class);
+            AuditContext auditContext = new AuditContext(
+                    "actor-1", "Ada", null, null, null, null, null, null, false, 0, null);
+
+            new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                    writer.persistRequiresNew(fixtureAudit(), auditContext));
+
+            List<AuditLogMessage> messages = new TransactionTemplate(transactionManager).execute(status ->
+                    context.getBean(EntityManager.class)
+                            .createQuery("select m from AuditLogMessage m", AuditLogMessage.class)
+                            .getResultList());
+            assertThat(messages).hasSize(1);
+            assertThat(messages.get(0).getMessage()).isEqualTo("Hello Ada!");
+        });
+    }
+
+    @Test
+    void failOnMissingTemplateFailsStartupWhenUnresolved() {
+        contextRunner.withUserConfiguration(AuditedBeanConfig.class)
+                .withPropertyValues("audit.log.fail-on-missing-template=true")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    void failOnMissingTemplateSucceedsWhenResolved() {
+        contextRunner.withUserConfiguration(AuditedBeanConfig.class)
+                .withPropertyValues(
+                        "audit.log.fail-on-missing-template=true",
+                        "audit.log.templates.startup-check=Hello!")
+                .run(context -> assertThat(context).hasNotFailed());
+    }
+
+    @Test
+    void missingTemplateOnlyWarnsWhenFailOnMissingTemplateIsOff() {
+        contextRunner.withUserConfiguration(AuditedBeanConfig.class)
+                .run(context -> assertThat(context).hasNotFailed());
+    }
+
+    private Audit fixtureAudit() {
+        try {
+            Method method = Fixture.class.getDeclaredMethod("action");
+            return method.getAnnotation(Audit.class);
+        } catch (NoSuchMethodException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static final class Fixture {
+        @Audit(auditType = "test", templates = {"greeting"})
+        void action() {
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class AuditedBeanConfig {
+        @Bean
+        AuditedBean auditedBean() {
+            return new AuditedBean();
+        }
+    }
+
+    static class AuditedBean {
+        @Audit(auditType = "test", templates = {"startup-check"})
+        void action() {
+        }
     }
 
     @Configuration(proxyBeanMethods = false)

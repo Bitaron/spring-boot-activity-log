@@ -17,6 +17,10 @@ import java.util.Objects;
  * One rendered template message belonging to an {@link AuditLog} event. A single audited method
  * invocation naming N templates in {@code @Audit(templates = ...)} produces one {@link AuditLog}
  * row and N of these child rows - never N separate {@code AuditLog} rows for one event.
+ * <p>
+ * Identified by {@link #templateName} rather than a database foreign key: templates can come
+ * from any configured {@code AuditTemplateSource} (properties, the {@code audit_template} table,
+ * or a consumer-supplied one), and not every source has a database row to key on.
  */
 @Getter
 @Setter
@@ -34,8 +38,8 @@ public class AuditLogMessage {
     @Column(name = "audit_log_id", nullable = false)
     private Long auditLogId;
 
-    @Column(name = "template_id")
-    private Long templateId;
+    @Column(name = "template_name")
+    private String templateName;
 
     @Column(name = "message", length = 4000)
     private String message;

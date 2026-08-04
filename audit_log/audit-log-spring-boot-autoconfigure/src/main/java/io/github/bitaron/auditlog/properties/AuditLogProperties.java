@@ -82,6 +82,23 @@ public class AuditLogProperties {
      */
     private DeliveryMode mode = DeliveryMode.ASYNC;
 
+    /**
+     * Templates keyed by name, defined in configuration rather than the {@code audit_template}
+     * table - see {@code PropertiesAuditTemplateSource}. Lets a template be versioned with the
+     * application's own code/config instead of requiring a separate database write, and is tried
+     * before the database so a property-defined template can override a same-named database row.
+     * Example: {@code audit.log.templates.login-attempt=Login by ${actorName!"unknown"}}.
+     */
+    private Map<String, String> templates = new HashMap<>();
+
+    /**
+     * When {@code true}, a {@code @Audit(templates = ...)} name that no configured
+     * {@code AuditTemplateSource} can resolve fails application startup instead of only logging a
+     * warning at call time. Off by default since it requires eagerly scanning every bean for
+     * {@code @Audit}-annotated methods, which not every application wants paid at startup.
+     */
+    private boolean failOnMissingTemplate = false;
+
     private final Executor executor = new Executor();
 
     public String getHeaderFor(String type) {
