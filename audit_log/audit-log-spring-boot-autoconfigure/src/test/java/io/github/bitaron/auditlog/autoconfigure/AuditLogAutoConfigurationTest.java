@@ -115,6 +115,31 @@ class AuditLogAutoConfigurationTest {
         });
     }
 
+    /**
+     * The regression test for A3: this starter must not add any {@code EntityManager}-typed bean
+     * to the host application's context. Spring's own JPA infrastructure already publishes
+     * synthetic shared-EntityManager beans (e.g. {@code jpaSharedEM_entityManagerFactory}) the
+     * moment any {@code @PersistenceContext}-style resolution happens anywhere in the context
+     * (Spring Data JPA repositories trigger this, as {@link HostRepository} does here) -
+     * regardless of this starter. What this starter must never do is add to that set: every
+     * internal consumer of an {@code EntityManager} (see {@link AuditLogWriter},
+     * {@code DatabaseAuditTemplateSource}, {@code JpaAuditLogQueryService}) builds its own private
+     * shared-EntityManager proxy directly from the {@code EntityManagerFactory} bean instead of
+     * depending on a bean of type {@code EntityManager} that this starter publishes - because
+     * there is no such bean, comparing the set of {@code EntityManager}-typed beans with the
+     * starter enabled vs. disabled must show no difference.
+     */
+    @Test
+    void starterAddsNoEntityManagerTypedBeanToTheHostContext() {
+        contextRunner.withPropertyValues("audit.log.enabled=false")
+                .run(withoutStarter -> contextRunner.run(withStarter -> {
+                    assertThat(withoutStarter).hasNotFailed();
+                    assertThat(withStarter).hasNotFailed();
+                    assertThat(withStarter.getBeanNamesForType(EntityManager.class))
+                            .containsExactlyInAnyOrder(withoutStarter.getBeanNamesForType(EntityManager.class));
+                }));
+    }
+
     /** Acceptance test for WP5: a template defined only in configuration renders with no
      * matching {@code audit_template} database row present at all. */
     @Test

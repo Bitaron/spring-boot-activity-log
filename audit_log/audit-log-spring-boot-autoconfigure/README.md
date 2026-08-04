@@ -1,56 +1,132 @@
 # audit-log
 
 A Spring Boot starter that records audit trail entries for annotated methods via AspectJ,
-rendering messages from database-stored FreeMarker templates.
+rendering messages from pluggable-source (properties or database) FreeMarker templates.
 
 ## Install
 
 ```xml
 <dependency>
     <groupId>io.github.bitaron</groupId>
-    <artifactId>audit-log</artifactId>
-    <version>1.1.0-SNAPSHOT</version>
+    <artifactId>audit-log-spring-boot-starter</artifactId>
+    <version>2.0.0-SNAPSHOT</version>
 </dependency>
 ```
 
 Requires a JPA/Hibernate application (`EntityManager` on the classpath and a configured
-`DataSource`). The starter ships its own entities (`AuditLog`, `AuditTemplate`, `AuditGroup`) and
-adds them to your application's entity scan automatically without narrowing what your own
-application scans - see [`AuditLogEntityScanRegistrar`](src/main/java/io/github/bitaron/auditLog/config/spring/AuditLogEntityScanRegistrar.java)
+`DataSource`). The starter ships its own entities (`AuditLog`, `AuditLogMessage`, `AuditTemplate`,
+`AuditGroup`) and adds them to your application's entity scan automatically without narrowing what
+your own application scans - see
+[`AuditLogEntityScanRegistrar`](src/main/java/io/github/bitaron/auditlog/autoconfigure/AuditLogEntityScanRegistrar.java)
 if you want to know how.
+
+See [`MIGRATION.md`](../MIGRATION.md) if you're upgrading from `1.x`.
 
 ## Usage
 
 ```java
 @Audit(auditType = "USER_MANAGEMENT", actionName = "update-profile", actionType = "UPDATE",
-        templateNameList = {"profile_updated"})
+        templates = {"profile_updated"})
 public void updateProfile(UpdateProfileRequest request) { ... }
 ```
 
-One audit log row is persisted per template name in `templateNameList` that has a matching row in
-the `audit_template` table (seed that table yourself - the starter does not ship one). If
-`templateNameList` is empty, one row is still recorded with a null message. A method that throws
-is recorded the same way via `@AfterThrowing`; a failure to record an entry never affects the
+Every invocation of an `@Audit`-annotated method produces exactly **one** `audit_log` row -
+regardless of how many templates it names. Each template in `templates()` that resolves (via any
+configured `AuditTemplateSource` - see below) renders into a child `audit_log_message` row; a
+template name that resolves nowhere is skipped with a `WARN` log line (or fails startup - see
+`audit.log.fail-on-missing-template`). If `templates` is empty, the row is still recorded with no
+child messages. A method that throws is recorded the same way, with `outcome=FAILURE` and the
+exception available to the template as `exception`; a failure to record an entry never affects the
 audited method's own outcome (see "Failure isolation" below).
 
 Exclude a parameter from the recorded arguments with `@AuditIgnore`:
 
 ```java
-@Audit(auditType = "AUTH", actionName = "login", templateNameList = {"login_attempt"})
+@Audit(auditType = "AUTH", actionName = "login", templates = {"login_attempt"})
 public LoginResult login(LoginRequest request, @AuditIgnore HttpServletResponse response) { ... }
 ```
+
+### Actor resolution
+
+`@Audit(actorSource = ...)` controls how the actor is determined:
+
+- **`CONTEXT`** (default) - the configured `AuditLogGenericDataGetter` bean, or HTTP headers if
+  none is configured (see "Trust model" below).
+- **`SYSTEM`** - actor id/name are always `"SYSTEM"`, for scheduled jobs and other
+  non-request-driven invocations.
+- **`EXPRESSION`** - a SpEL expression (`actorExpression`) evaluated against the method's result,
+  arguments, and exception:
+
+  ```java
+  @Audit(auditType = "ORDER", templates = {"order_created"},
+          actorSource = ActorSource.EXPRESSION, actorExpression = "#result.ownerId")
+  public Order createOrder(OrderRequest request) { ... }
+  ```
+
+  This replaces the `1.x` design where the method's return type had to implement
+  `AuditLogGenericDataGetter` for the aspect to downcast it.
+
+### Delivery mode
+
+`audit.log.mode` controls when/how the audit row is written:
+
+- **`ASYNC`** (default) - dispatched off the caller's thread. If the audited method runs inside a
+  transaction, the write is deferred until that transaction commits, so a rolled-back business
+  operation never leaves behind an audit record describing something that didn't happen.
+- **`SYNC`** - written on the caller's thread, sharing the caller's transaction (commits/rolls back
+  atomically with it). Higher latency, but the strongest delivery guarantee this library offers.
+
+Every place a record can be lost (executor queue full, write failure, records still queued at
+shutdown) increments an `audit.log.records{outcome=...}` Micrometer counter (when Micrometer is on
+the classpath) in addition to being logged - a compliance artifact needs an observable, alertable
+signal for loss, not just a `WARN` line.
 
 ## Configuration (`audit.log.*`)
 
 | Property | Default | Description |
 |---|---|---|
 | `audit.log.enabled` | `true` | Master switch; disables the aspect, executor, and entity scan entirely. |
-| `audit.log.header-mappings.requesterId` | `X-USER-ID` | Header read for the actor id when no `AuditLogGenericDataGetter` bean is configured. |
-| `audit.log.header-mappings.requesterName` | `X-USER-NAME` | Same, for the actor name. |
+| `audit.log.mode` | `ASYNC` | `ASYNC` or `SYNC` delivery - see "Delivery mode" above. |
+| `audit.log.headers.requester-id` | `X-USER-ID` | Header read for the actor id when no `AuditLogGenericDataGetter` bean is configured. |
+| `audit.log.headers.requester-name` | `X-USER-NAME` | Same, for the actor name. |
 | `audit.log.trust-forwarded-headers` | `false` | Whether to trust `X-Forwarded-For`/`Proxy-Client-IP`/`WL-Proxy-Client-IP` for the client IP. |
 | `audit.log.masked-fields` | `password, secret, token, authorization, creditCardNumber` | Field names redacted (at any depth) in the persisted `data` JSON. |
 | `audit.log.max-serialized-data-length` | `8192` | Characters after which the serialized `data` payload is truncated into a `{truncated, preview}` envelope. |
-| `audit.log.executor.core-pool-size` / `max-pool-size` / `queue-capacity` | `2` / `10` / `500` | Sizing for the dedicated executor audit writes are dispatched to. |
+| `audit.log.max-template-cache-size` | `256` | Max compiled FreeMarker templates kept in memory (LRU-evicted beyond this). |
+| `audit.log.templates.<name>` | - | Define a template in configuration instead of the `audit_template` table - see "Template sourcing" below. |
+| `audit.log.fail-on-missing-template` | `false` | Fail application startup if any `@Audit(templates=...)` name can't be resolved by any configured source, instead of only warning per call. |
+| `audit.log.executor.core-pool-size` / `max-pool-size` / `queue-capacity` | `2` / `10` / `500` | Sizing for the dedicated executor `ASYNC` writes are dispatched to. |
+| `audit.log.executor.await-termination-seconds` | `30` | How long to wait for queued/running writes to finish on graceful shutdown before giving up on the rest. |
+
+All numeric properties are validated (`@Min`) when a JSR-303 provider (e.g.
+`spring-boot-starter-validation`) is on your application's classpath; without one, invalid values
+bind without error, same as if the constraints weren't declared.
+
+### Template sourcing
+
+Templates are resolved by trying every configured `AuditTemplateSource` bean in order:
+
+1. **`PropertiesAuditTemplateSource`** - `audit.log.templates.<name>=<template>`, so a template can
+   be versioned alongside application code instead of requiring a database write.
+2. **`DatabaseAuditTemplateSource`** - the `audit_template` table (seed it yourself; the starter
+   does not ship one).
+
+A property-defined template overrides a same-named database row. Supply your own
+`AuditTemplateSource` bean to add another source (e.g. loading from classpath resources).
+
+## Reading audit records
+
+Don't query the `AuditLog`/`AuditLogMessage` entities directly - use `AuditLogQueryService`:
+
+```java
+Page<AuditRecord> page = auditLogQueryService.find(
+        new AuditQuery("actor-123", "USER_MANAGEMENT", from, to),
+        PageRequest.of(0, 20));
+```
+
+`AuditQuery` filters on `actorId`, `auditType`, and a `createdAt` range - the table's three indexed
+columns. `AuditRecord` is an immutable projection, not the JPA entity, so the persistence model is
+free to change without breaking this API.
 
 ## Extension points
 
@@ -61,6 +137,7 @@ public LoginResult login(LoginRequest request, @AuditIgnore HttpServletResponse 
 - **`AuditLogTemplateResolver`** - swap out FreeMarker for your own template engine.
 - **`AuditLogArgumentSerializer`** - swap out the default Jackson-based serializer.
 - **`AuditLogLocationResolver`** - plug in IP geolocation (e.g. MaxMind GeoIP2); none is bundled.
+- **`AuditTemplateSource`** - add another place templates can come from.
 
 ## Trust model
 
@@ -73,23 +150,24 @@ spoofable without a trusted proxy in front. For a verified actor identity, suppl
 `AuditLogGenericDataGetter` backed by your real authentication mechanism, or rely on the
 Spring-Security-backed default described above.
 
-FreeMarker templates are read from the `audit_template` table and executed. The resolver
-disables the `?api` built-in and uses `SAFER_RESOLVER` to block reflective escapes into arbitrary
-classes, but write access to `audit_template` is still effectively the ability to execute
-template logic in this process - restrict who can write to that table the same way you would
-restrict deploy access.
+FreeMarker templates are executed against the invocation's context. The resolver disables the
+`?api` built-in and uses `SAFER_RESOLVER` to block reflective escapes into arbitrary classes, but
+write access to wherever your templates come from is still effectively the ability to execute
+template logic in this process - restrict who can edit `audit.log.templates.*` / the
+`audit_template` table the same way you would restrict deploy access.
 
 ## Failure isolation
 
 A failure anywhere in the audit pipeline - a malformed template, an unserializable argument, a
-database error - is caught and logged at `WARN`. It is designed to never surface to the audited
-method's caller. Writes are also dispatched to a dedicated executor (not `@Async`, so no
-`@EnableAsync` is imposed on your application) and persisted in their own transaction
-(`REQUIRES_NEW`), so they run off the request thread and don't roll back with a failed business
-transaction.
+database error - is caught, logged at `WARN`, and counted via the `audit.log.records` metric. It
+is designed to never surface to the audited method's caller.
 
 ## Schema
 
-See the entity classes in `io.github.bitaron.auditlog.entity` for the mapped columns. Use
-`ddl-auto` for local development only; for production, manage `audit_log`/`audit_template`/
-`audit_group` with your own migration tool.
+See the entity classes in `io.github.bitaron.auditlog.entity` for the mapped columns:
+`audit_log` (one row per invocation; `outcome`, `duration_ms`, `trace_id`, and `data` - the
+serialized `{args, result, exception, exceptionThrown}`, deliberately not duplicating the
+actor/client columns), `audit_log_message` (rendered messages, keyed by `template_name`),
+`audit_template`, and `audit_group`. Use `ddl-auto` for local development only; for production,
+manage the schema with your own migration tool - see [`MIGRATION.md`](../MIGRATION.md) for the
+`1.x` → `2.x` schema diff.

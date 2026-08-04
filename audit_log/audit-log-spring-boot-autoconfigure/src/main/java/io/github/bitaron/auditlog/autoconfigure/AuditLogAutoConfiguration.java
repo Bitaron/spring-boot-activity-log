@@ -99,9 +99,26 @@ public class AuditLogAutoConfiguration {
                 auditMetricsRecorder);
     }
 
-    @Bean
-    @ConditionalOnMissingBean(name = "auditLogEntityManager")
-    public EntityManager auditLogEntityManager(EntityManagerFactory entityManagerFactory) {
+    /**
+     * Deliberately not a {@code @Bean}: Spring Boot registers an {@code EntityManagerFactory},
+     * not an {@code EntityManager} - {@code @PersistenceContext} injection points are handled by
+     * a {@code BeanPostProcessor}, not ordinary bean lookup. Publishing a plain
+     * {@code @Bean EntityManager} would add a bean type to the host application's context that it
+     * never asked for: an unqualified {@code @Autowired EntityManager} in host code would
+     * silently start resolving this starter's shared EntityManager instead of failing loudly (the
+     * correct behavior, since the host has no {@code EntityManager} bean of its own to begin
+     * with), and a host with multiple persistence units would gain an ambiguity it didn't have
+     * before. Neither {@code @Bean(defaultCandidate = false)} (only de-prioritizes a bean when
+     * other same-type candidates exist to prefer instead - a no-op when this would be the only
+     * {@code EntityManager} in the context, the common single-persistence-unit case) nor
+     * {@code @Bean(autowireCandidate = false)} (blocks autowiring entirely, including this
+     * starter's own {@code @Qualifier}-based injection into {@link #auditLogWriter} etc.) gives
+     * "invisible to the host's autowiring, usable by our own beans" - so instead, every internal
+     * consumer below builds its own thin shared-EntityManager proxy directly from the
+     * {@code EntityManagerFactory} bean Spring Boot already provides, and the type
+     * {@code EntityManager} is never registered as a bean at all.
+     */
+    private static EntityManager sharedEntityManager(EntityManagerFactory entityManagerFactory) {
         return SharedEntityManagerCreator.createSharedEntityManager(entityManagerFactory);
     }
 
@@ -114,18 +131,18 @@ public class AuditLogAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(name = "databaseAuditTemplateSource")
-    public AuditTemplateSource databaseAuditTemplateSource(EntityManager auditLogEntityManager) {
-        return new DatabaseAuditTemplateSource(auditLogEntityManager);
+    public AuditTemplateSource databaseAuditTemplateSource(EntityManagerFactory entityManagerFactory) {
+        return new DatabaseAuditTemplateSource(sharedEntityManager(entityManagerFactory));
     }
 
     @Bean
     @ConditionalOnMissingBean
-    public AuditLogWriter auditLogWriter(EntityManager auditLogEntityManager,
+    public AuditLogWriter auditLogWriter(EntityManagerFactory entityManagerFactory,
                                           AuditLogTemplateResolver auditLogTemplateResolver,
                                           AuditLogArgumentSerializer auditLogArgumentSerializer,
                                           List<AuditTemplateSource> auditTemplateSources) {
-        return new AuditLogWriter(auditLogEntityManager, auditLogTemplateResolver, auditLogArgumentSerializer,
-                auditTemplateSources);
+        return new AuditLogWriter(sharedEntityManager(entityManagerFactory), auditLogTemplateResolver,
+                auditLogArgumentSerializer, auditTemplateSources);
     }
 
     @Bean
@@ -161,7 +178,7 @@ public class AuditLogAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public AuditLogQueryService auditLogQueryService(EntityManager auditLogEntityManager) {
-        return new JpaAuditLogQueryService(auditLogEntityManager);
+    public AuditLogQueryService auditLogQueryService(EntityManagerFactory entityManagerFactory) {
+        return new JpaAuditLogQueryService(sharedEntityManager(entityManagerFactory));
     }
 }
