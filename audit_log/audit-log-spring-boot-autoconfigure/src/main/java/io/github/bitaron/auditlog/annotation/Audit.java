@@ -18,8 +18,9 @@ import java.lang.annotation.Target;
  * {@link #templates()}.
  * <p>
  * {@code @Target} includes {@code TYPE} and this annotation is {@code @Repeatable}, matching how
- * annotations of this kind are conventionally declared - see {@link Audits} for the current
- * limitation on what the aspect actually processes for those two cases today.
+ * annotations of this kind are conventionally declared. Stacking two or more {@code @Audit} on
+ * one method is fully supported - see {@link Audits}; applying it at {@code TYPE} level is
+ * accepted by the compiler but not yet processed by the aspect.
  */
 @Documented
 @Inherited
