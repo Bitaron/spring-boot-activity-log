@@ -3,6 +3,7 @@ package io.github.bitaron.auditlog.autoconfigure;
 import io.github.bitaron.auditlog.contract.AuditLogArgumentSerializer;
 import io.github.bitaron.auditlog.contract.AuditLogGenericDataGetter;
 import io.github.bitaron.auditlog.contract.AuditLogLocationResolver;
+import io.github.bitaron.auditlog.contract.AuditLogRecorder;
 import io.github.bitaron.auditlog.contract.AuditLogTemplateResolver;
 import io.github.bitaron.auditlog.contract.AuditMetricsRecorder;
 import io.github.bitaron.auditlog.contract.AuditTemplateSource;
@@ -16,6 +17,7 @@ import io.github.bitaron.auditlog.core.AuditSchemaValidator;
 import io.github.bitaron.auditlog.core.AuditTemplateValidator;
 import io.github.bitaron.auditlog.core.DatabaseAuditTemplateSource;
 import io.github.bitaron.auditlog.core.DefaultAuditContextResolver;
+import io.github.bitaron.auditlog.core.DefaultAuditLogRecorder;
 import io.github.bitaron.auditlog.core.FreemarkerTemplateResolver;
 import io.github.bitaron.auditlog.core.JacksonAuditLogArgumentSerializer;
 import io.github.bitaron.auditlog.core.NoOpAuditMetricsRecorder;
@@ -178,6 +180,17 @@ public class AuditLogAutoConfiguration {
     @ConditionalOnMissingBean
     public AuditLogAspect auditLogAspect(AuditContextResolver auditContextResolver, AuditLogger auditLogger) {
         return new AuditLogAspect(auditContextResolver, auditLogger);
+    }
+
+    /**
+     * Programmatic write facade for callers with no {@code @Audit}-annotated method invocation to
+     * intercept - see {@link AuditLogRecorder}. Depends only on {@link AuditLogger}, not the
+     * aspect, so it's available even to a caller that never triggers any AOP proxying.
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public AuditLogRecorder auditLogRecorder(AuditLogger auditLogger) {
+        return new DefaultAuditLogRecorder(auditLogger);
     }
 
     @Bean
