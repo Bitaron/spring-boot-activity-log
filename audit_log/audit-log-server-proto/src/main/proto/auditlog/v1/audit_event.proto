@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+// Wire schema for the audit-log REST server (audit-log-spring-boot-server). Binary (Protobuf),
+// not JSON, chosen specifically for forward- and backward-compatible schema evolution without a
+// separate schema registry - see WP13's plan rationale (Protobuf vs. Avro) for why.
+//
+// COMPATIBILITY RULES - follow these for every future change to this file:
+//   1. NEVER reuse or renumber a field number. If a field is removed, add its number to a
+//      `reserved` statement on that message instead of letting a later field reuse it.
+//   2. Only ADD new fields as the evolution mechanism. Never change an existing field's type -
+//      that is a breaking change even though `protoc` will still compile it.
+//   3. Every enum's zero value is an explicit `..._UNSPECIFIED` sentinel (proto3 gives every
+//      field a default value on the wire, so 0 must never silently mean a real, meaningful value).
+//   4. New messages/fields are safe to add at any time; removing or renumbering is not.
+//
+// Regenerate client stubs for any language with `protoc` directly against this file - see
+// docs/CLIENT_CODEGEN.md at the repository root.
+package auditlog.v1;
+
+option java_package = "io.github.bitaron.auditlog.server.proto.v1";
+option java_multiple_files = true;
+
+// POST /audit-log/events body: one fully-described audit event, for a caller with no
+// @Audit-annotated method invocation for AOP to intercept - mirrors
+// io.github.bitaron.auditlog.model.AuditEventRequest field-for-field. args_json/result_json/
+// exception_json are opaque, caller-supplied JSON text: this v1 schema passes them through
+// AuditLogArgumentSerializer as plain strings rather than structurally merging them into the
+// stored `data` payload (they end up JSON-string-escaped inside it, not deep-merged) - a
+// deliberate, documented v1 simplification. A future revision could accept `google.protobuf.Struct`
+// for true structural passthrough without breaking this one, per rule 4 above.
+message AuditEventRequest {
+  string audit_type = 1;
+  string action_name = 2;
+  string action_type = 3;
+  string group_name = 4;
+  repeated string templates = 5;
+  string actor_id = 6;
+  string actor_name = 7;
+  string client_ip = 8;
+  string client_location = 9;
+  string user_agent = 10;
+  string args_json = 11;
+  string result_json = 12;
+  string exception_json = 13;
+  bool exception_thrown = 14;
+  int64 duration_millis = 15;
+  string trace_id = 16;
+}
+
+// POST /audit-log/events response. The write itself follows the configured delivery mode
+// (audit.log.mode) exactly like the @Audit path - `accepted` means the request was well-formed
+// and handed to that same pipeline, not that the row is durably committed yet.
+message AuditEventResponse {
+  bool accepted = 1;
+}
+
+enum AuditOutcomeProto {
+  AUDIT_OUTCOME_UNSPECIFIED = 0;
+  AUDIT_OUTCOME_SUCCESS = 1;
+  AUDIT_OUTCOME_FAILURE = 2;
+}
+
+// One row from AuditLogQueryService.find - mirrors io.github.bitaron.auditlog.query.AuditRecord.
+// created_at is ISO-8601 (java.time.LocalDateTime#toString wire format, UTC).
+message AuditRecordProto {
+  int64 id = 1;
+  string audit_type = 2;
+  string actor_id = 3;
+  string actor_name = 4;
+  string client_ip = 5;
+  string client_location = 6;
+  string user_agent = 7;
+  string action_type = 8;
+  string action_name = 9;
+  string created_at = 10;
+  AuditOutcomeProto outcome = 11;
+  int64 duration_ms = 12;
+  string trace_id = 13;
+  string data = 14;
+  int64 group_id = 15;
+}
+
+// GET /audit-log/records query parameters, mapped by the controller - not sent as a message body,
+// but grouped here as the typed shape of the accepted query parameters for client codegen.
+message AuditQueryRequest {
+  string actor_id = 1;
+  string audit_type = 2;
+  string created_at_from = 3; // ISO-8601; unset means unfiltered
+  string created_at_to = 4;   // ISO-8601; unset means unfiltered
+  int32 page = 5;
+  int32 size = 6;
+}
+
+message AuditQueryResponse {
+  repeated AuditRecordProto records = 1;
+  int64 total_elements = 2;
+  int32 page = 3;
+  int32 size = 4;
+}
