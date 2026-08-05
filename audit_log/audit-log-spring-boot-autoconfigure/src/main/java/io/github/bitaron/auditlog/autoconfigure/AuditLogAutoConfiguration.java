@@ -9,6 +9,7 @@ import io.github.bitaron.auditlog.contract.AuditTemplateSource;
 import io.github.bitaron.auditlog.core.AuditContextResolver;
 import io.github.bitaron.auditlog.core.AuditLogAspect;
 import io.github.bitaron.auditlog.core.AuditLogTaskExecutor;
+import io.github.bitaron.auditlog.core.AuditLogRetentionService;
 import io.github.bitaron.auditlog.core.AuditLogWriter;
 import io.github.bitaron.auditlog.core.AuditLogger;
 import io.github.bitaron.auditlog.core.AuditSchemaValidator;
@@ -37,6 +38,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.orm.jpa.SharedEntityManagerCreator;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import java.util.List;
 import java.util.concurrent.Executor;
@@ -180,8 +182,10 @@ public class AuditLogAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public AuditLogQueryService auditLogQueryService(EntityManagerFactory entityManagerFactory) {
-        return new JpaAuditLogQueryService(sharedEntityManager(entityManagerFactory));
+    public AuditLogQueryService auditLogQueryService(EntityManagerFactory entityManagerFactory,
+                                                       AuditLogProperties auditLogProperties) {
+        return new JpaAuditLogQueryService(
+                sharedEntityManager(entityManagerFactory), auditLogProperties.getQuery().getMaxPageSize());
     }
 
     @Bean
@@ -189,5 +193,21 @@ public class AuditLogAutoConfiguration {
     @ConditionalOnProperty(prefix = "audit.log.schema-validation", name = "enabled", havingValue = "true", matchIfMissing = true)
     public AuditSchemaValidator auditSchemaValidator(DataSource dataSource) {
         return new AuditSchemaValidator(dataSource);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "audit.log.retention", name = "enabled", havingValue = "true")
+    public AuditLogRetentionService auditLogRetentionService(EntityManagerFactory entityManagerFactory,
+                                                               PlatformTransactionManager transactionManager,
+                                                               AuditLogProperties auditLogProperties) {
+        AuditLogProperties.Retention retention = auditLogProperties.getRetention();
+        if (retention.getMaxAge() == null) {
+            throw new IllegalStateException(
+                    "audit.log.retention.enabled=true requires audit.log.retention.max-age to be set - "
+                            + "there is no safe default retention window for a compliance artifact");
+        }
+        return new AuditLogRetentionService(sharedEntityManager(entityManagerFactory), transactionManager,
+                retention.getMaxAge(), retention.getCron(), retention.getBatchSize());
     }
 }
