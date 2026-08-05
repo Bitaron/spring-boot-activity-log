@@ -1,6 +1,7 @@
 package io.github.bitaron.auditlog.core;
 
 import io.github.bitaron.auditlog.annotation.Audit;
+import io.github.bitaron.auditlog.annotation.AuditDeliveryMode;
 import io.github.bitaron.auditlog.contract.AuditMetricsRecorder;
 import io.github.bitaron.auditlog.model.AuditContext;
 import io.github.bitaron.auditlog.properties.AuditLogProperties.DeliveryMode;
@@ -31,6 +32,10 @@ import java.util.concurrent.RejectedExecutionException;
  * Every place a record can be lost - the executor's queue is full, the write itself fails - is
  * reported through {@link AuditMetricsRecorder} in addition to being logged, so delivery loss is
  * an observable, alertable signal rather than something that only shows up in application logs.
+ * <p>
+ * <b>Per-call override:</b> {@link Audit#mode()} lets one {@code @Audit} site force {@code SYNC}
+ * or {@code ASYNC} regardless of the application-wide {@link #mode}; {@link #effectiveMode}
+ * resolves the two into the single mode actually used for a given record.
  */
 @Slf4j
 public class AuditLogger {
@@ -49,7 +54,7 @@ public class AuditLogger {
     }
 
     public void log(Audit audit, AuditContext auditContext) {
-        if (mode == DeliveryMode.SYNC) {
+        if (effectiveMode(audit) == DeliveryMode.SYNC) {
             writeShared(audit, auditContext);
             return;
         }
@@ -63,6 +68,19 @@ public class AuditLogger {
         } else {
             dispatch(audit, auditContext);
         }
+    }
+
+    /**
+     * Resolves {@link Audit#mode()} against the application-wide {@link #mode}: an explicit
+     * {@code ASYNC}/{@code SYNC} on the annotation always wins; {@link AuditDeliveryMode#INHERIT}
+     * (the default) falls back to whatever {@code audit.log.mode} is configured.
+     */
+    private DeliveryMode effectiveMode(Audit audit) {
+        return switch (audit.mode()) {
+            case ASYNC -> DeliveryMode.ASYNC;
+            case SYNC -> DeliveryMode.SYNC;
+            case INHERIT -> mode;
+        };
     }
 
     private void writeShared(Audit audit, AuditContext auditContext) {

@@ -76,6 +76,19 @@ public @interface Audit {
     ActorSource actorSource() default ActorSource.CONTEXT;
 
     /**
+     * Per-call override of the starter-wide {@code audit.log.mode} delivery setting. See
+     * {@link AuditDeliveryMode} for what each value means and why it's a distinct type from the
+     * properties-level delivery mode enum.
+     * <p>
+     * Example: a login-attempt audit that must share the caller's transaction even though the
+     * application otherwise defaults to {@code ASYNC} everywhere else -
+     * {@code @Audit(auditType = "AUTH", mode = AuditDeliveryMode.SYNC)}.
+     *
+     * @return the delivery mode override; {@link AuditDeliveryMode#INHERIT} by default
+     */
+    AuditDeliveryMode mode() default AuditDeliveryMode.INHERIT;
+
+    /**
      * SpEL expression evaluated when {@link #actorSource()} is {@link ActorSource#EXPRESSION},
      * against a root object exposing {@code #result} (the method's return value), {@code #args}
      * (its arguments, as an array), and {@code #exception} (the thrown exception, or {@code null}

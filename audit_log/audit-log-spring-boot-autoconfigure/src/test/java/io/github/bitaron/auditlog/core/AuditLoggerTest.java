@@ -1,6 +1,7 @@
 package io.github.bitaron.auditlog.core;
 
 import io.github.bitaron.auditlog.annotation.Audit;
+import io.github.bitaron.auditlog.annotation.AuditDeliveryMode;
 import io.github.bitaron.auditlog.contract.AuditMetricsRecorder;
 import io.github.bitaron.auditlog.model.AuditContext;
 import io.github.bitaron.auditlog.properties.AuditLogProperties;
@@ -124,9 +125,56 @@ class AuditLoggerTest {
         verifyNoInteractions(writer);
     }
 
+    /** WP9 acceptance: an explicit {@code @Audit(mode = SYNC)} overrides a global ASYNC default. */
+    @Test
+    void perCallSyncOverrideWinsOverGlobalAsyncMode() {
+        AuditLogger logger = new AuditLogger(writer, Runnable::run, metrics, AuditLogProperties.DeliveryMode.ASYNC);
+
+        logger.log(fixtureAudit("syncOverride"), clientData);
+
+        verify(writer, times(1)).persistShared(fixtureAudit("syncOverride"), clientData);
+        verify(writer, times(0)).persistRequiresNew(any(), any());
+    }
+
+    /**
+     * WP9 acceptance: an explicit {@code @Audit(mode = ASYNC)} overrides a global SYNC default -
+     * still deferring to {@code afterCommit} when a transaction is active, exactly like the
+     * global-ASYNC case.
+     */
+    @Test
+    void perCallAsyncOverrideWinsOverGlobalSyncModeAndDefersToCommit() {
+        AuditLogger logger = new AuditLogger(writer, Runnable::run, metrics, AuditLogProperties.DeliveryMode.SYNC);
+        Audit asyncOverride = fixtureAudit("asyncOverride");
+
+        TransactionSynchronizationManager.initSynchronization();
+        logger.log(asyncOverride, clientData);
+
+        verifyNoInteractions(writer);
+
+        for (TransactionSynchronization synchronization : TransactionSynchronizationManager.getSynchronizations()) {
+            synchronization.afterCommit();
+        }
+
+        verify(writer, times(1)).persistRequiresNew(asyncOverride, clientData);
+    }
+
+    /** No override (the default {@code INHERIT}) keeps following whatever the global mode is. */
+    @Test
+    void inheritModeFollowsTheGlobalSetting() {
+        AuditLogger logger = new AuditLogger(writer, Runnable::run, metrics, AuditLogProperties.DeliveryMode.SYNC);
+
+        logger.log(audit, clientData);
+
+        verify(writer, times(1)).persistShared(audit, clientData);
+    }
+
     private Audit fixtureAudit() {
+        return fixtureAudit("action");
+    }
+
+    private Audit fixtureAudit(String methodName) {
         try {
-            Method method = Fixture.class.getDeclaredMethod("action");
+            Method method = Fixture.class.getDeclaredMethod(methodName);
             return method.getAnnotation(Audit.class);
         } catch (NoSuchMethodException e) {
             throw new IllegalStateException(e);
@@ -136,6 +184,14 @@ class AuditLoggerTest {
     private static final class Fixture {
         @Audit(auditType = "test", templates = {"greeting"})
         void action() {
+        }
+
+        @Audit(auditType = "test", mode = AuditDeliveryMode.SYNC)
+        void syncOverride() {
+        }
+
+        @Audit(auditType = "test", mode = AuditDeliveryMode.ASYNC)
+        void asyncOverride() {
         }
     }
 }

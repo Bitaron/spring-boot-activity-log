@@ -1,6 +1,7 @@
 package io.github.bitaron.auditlog.core;
 
 import io.github.bitaron.auditlog.annotation.Audit;
+import io.github.bitaron.auditlog.annotation.AuditDeliveryMode;
 import io.github.bitaron.auditlog.autoconfigure.AuditLogAutoConfiguration;
 import io.github.bitaron.auditlog.entity.AuditLog;
 import io.github.bitaron.auditlog.testfixtures.host.HostAppMarker;
@@ -37,7 +38,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AuditLogAspectTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-            .withUserConfiguration(HostAppMarker.class, RepeatedAuditServiceConfig.class)
+            .withUserConfiguration(HostAppMarker.class, RepeatedAuditServiceConfig.class, SyncOverrideServiceConfig.class)
             .withPropertyValues(
                     "spring.datasource.generate-unique-name=true",
                     "spring.jpa.hibernate.ddl-auto=create-drop")
@@ -64,6 +65,24 @@ class AuditLogAspectTest {
         });
     }
 
+    /**
+     * WP9 acceptance (real-AOP case): the application-wide default is {@code ASYNC} (the
+     * autoconfiguration default, left unset here), but this method's {@code @Audit(mode = SYNC)}
+     * forces the write onto the caller's thread - so the row must already exist the instant
+     * {@code doThingSync()} returns, with no {@link Awaitility} wait needed.
+     */
+    @Test
+    void perCallSyncOverrideIsVisibleImmediatelyThroughRealAop() {
+        contextRunner.run(context -> {
+            SyncOverrideService service = context.getBean(SyncOverrideService.class);
+
+            service.doThingSync("payload");
+
+            assertThat(findAll(context)).hasSize(1);
+            assertThat(findAll(context).get(0).getAuditType()).isEqualTo("sync-override");
+        });
+    }
+
     private List<AuditLog> findAll(ApplicationContext context) {
         return new TransactionTemplate(context.getBean(PlatformTransactionManager.class)).execute(status ->
                 context.getBean(EntityManager.class)
@@ -84,6 +103,21 @@ class AuditLogAspectTest {
         @Audit(auditType = "second", actionName = "do-thing-second")
         public void doThing(String payload) {
             // no-op - the audit records are what this test asserts on
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class SyncOverrideServiceConfig {
+        @Bean
+        SyncOverrideService syncOverrideService() {
+            return new SyncOverrideService();
+        }
+    }
+
+    static class SyncOverrideService {
+        @Audit(auditType = "sync-override", mode = AuditDeliveryMode.SYNC)
+        public void doThingSync(String payload) {
+            // no-op - the audit record is what this test asserts on
         }
     }
 }
