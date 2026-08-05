@@ -81,6 +81,29 @@ shutdown) increments an `audit.log.records{outcome=...}` Micrometer counter (whe
 the classpath) in addition to being logged - a compliance artifact needs an observable, alertable
 signal for loss, not just a `WARN` line.
 
+**Per-call override:** `@Audit(mode = ...)` overrides `audit.log.mode` for one call site, using the
+same `ASYNC`/`SYNC` semantics above:
+
+```java
+@Audit(auditType = "AUTH", actionName = "login", templates = {"login_attempt"},
+        mode = AuditDeliveryMode.SYNC)
+public LoginResult login(LoginRequest request) { ... }
+```
+
+Defaults to `AuditDeliveryMode.INHERIT` - following the global `audit.log.mode` - so adding this
+attribute to an existing `@Audit` usage changes nothing until you set it explicitly.
+
+### Startup schema validation
+
+On startup, this starter checks that `audit_log`, `audit_log_message`, `audit_template`, and
+`audit_group` all exist in the configured database, failing fast with a message naming exactly
+which table(s) are missing and pointing at `db/migration/V2__audit_log_v2.sql` - instead of the
+first sign of trouble being a runtime `SQLException` buried in a `WARN` log line on the first
+audited call. On by default; set `audit.log.schema-validation.enabled=false` to skip it (e.g. for a
+deployment whose schema is already validated some other way, or that relies on
+`spring.jpa.hibernate.ddl-auto=create`/`update`, which this check correctly waits for before
+running).
+
 ## Configuration (`audit.log.*`)
 
 | Property | Default | Description |
@@ -97,6 +120,12 @@ signal for loss, not just a `WARN` line.
 | `audit.log.fail-on-missing-template` | `false` | Fail application startup if any `@Audit(templates=...)` name can't be resolved by any configured source, instead of only warning per call. |
 | `audit.log.executor.core-pool-size` / `max-pool-size` / `queue-capacity` | `2` / `10` / `500` | Sizing for the dedicated executor `ASYNC` writes are dispatched to. |
 | `audit.log.executor.await-termination-seconds` | `30` | How long to wait for queued/running writes to finish on graceful shutdown before giving up on the rest. |
+| `audit.log.schema-validation.enabled` | `true` | Fail startup if the 4 required tables are missing - see "Startup schema validation" above. |
+| `audit.log.query.max-page-size` | `200` | Max page size `AuditLogQueryService.find`/`findAfter` accept before rejecting the request. |
+| `audit.log.retention.enabled` | `false` | Master switch for the scheduled purge job - see "Retention" above. |
+| `audit.log.retention.max-age` | - (required if enabled) | Records older than this become eligible for deletion. |
+| `audit.log.retention.cron` | `0 0 3 * * *` | Cron schedule (six-field, seconds first) the purge job runs on. |
+| `audit.log.retention.batch-size` | `1000` | Rows deleted per batch iteration. |
 
 All numeric properties are validated (`@Min`) when a JSR-303 provider (e.g.
 `spring-boot-starter-validation`) is on your application's classpath; without one, invalid values
@@ -127,6 +156,67 @@ Page<AuditRecord> page = auditLogQueryService.find(
 `AuditQuery` filters on `actorId`, `auditType`, and a `createdAt` range - the table's three indexed
 columns. `AuditRecord` is an immutable projection, not the JPA entity, so the persistence model is
 free to change without breaking this API.
+
+`Pageable`'s page size is rejected (`IllegalArgumentException`) above `audit.log.query.max-page-size`
+(default `200`) rather than silently clamped, and its `Sort` is honored but restricted to a
+whitelist of indexed properties (`id`, `createdAt`, `actorId`, `auditType`) - both to keep every
+accepted query index-backed.
+
+**At scale**, prefer keyset ("seek") pagination over `find`'s offset pagination - its cost doesn't
+grow with how deep into the result set you are, unlike `OFFSET`/`LIMIT`:
+
+```java
+List<AuditRecord> page = auditLogQueryService.findAfter(AuditQuery.all(), cursor, 200);
+AuditRecord last = page.get(page.size() - 1);
+AuditCursor nextCursor = new AuditCursor(last.createdAt(), last.id()); // pass into the next call
+```
+
+Start with `cursor = null` for the first page; a page shorter than the requested limit means
+you've reached the end. See [`docs/SCALING.md`](../../docs/SCALING.md) for when this matters and
+why.
+
+## Retention
+
+`AuditLogRetentionService` deletes `AuditLog`/`AuditLogMessage` rows older than a configured age,
+in bounded batches, on its own dedicated scheduler - **off by default**, since deleting audit
+history is a decision this starter must never make for you unasked:
+
+```properties
+audit.log.retention.enabled=true
+audit.log.retention.max-age=P90D
+audit.log.retention.cron=0 0 3 * * *
+audit.log.retention.batch-size=1000
+```
+
+`max-age` is required once `enabled=true` - there's no safe default retention window for a
+compliance artifact. See [`docs/SCALING.md`](../../docs/SCALING.md) for how this composes with
+table partitioning on a very large table.
+
+## Recording events without `@Audit`
+
+`@Audit` + AOP only works for an in-process method call. For anything else with event data to
+record but no method invocation to intercept - a message-queue consumer, a batch job, the REST
+server module below - use `AuditLogRecorder` directly:
+
+```java
+auditLogRecorder.record(new AuditEventRequest(
+        "PAYMENT", "capture", "UPDATE", "", List.of("payment_captured"),
+        actorId, actorName, clientIp, clientLocation, userAgent,
+        args, result, exception, exceptionThrown, durationMillis, traceId));
+```
+
+It follows the same delivery pipeline (mode, commit-aware dispatch, metrics, failure isolation) as
+the `@Audit` path - this is an alternate way to get an event *in*, not a different way it's
+written afterward.
+
+## Server mode and other-language clients
+
+For a caller outside this JVM entirely, the optional `audit-log-spring-boot-server` module exposes
+`AuditLogRecorder`/`AuditLogQueryService` over HTTP (Protobuf wire format, JSON also supported for
+debugging), gated by `audit.log.server.enabled` (off by default) and an `X-API-Key` header. Java
+callers can use `audit-log-java-client`; any other language can generate a client directly from the
+`.proto` schema in `audit-log-server-proto` - see
+[`docs/CLIENT_CODEGEN.md`](../../docs/CLIENT_CODEGEN.md).
 
 ## Extension points
 

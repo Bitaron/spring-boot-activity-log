@@ -3,17 +3,21 @@ package io.github.bitaron.auditlog.autoconfigure;
 import io.github.bitaron.auditlog.contract.AuditLogArgumentSerializer;
 import io.github.bitaron.auditlog.contract.AuditLogGenericDataGetter;
 import io.github.bitaron.auditlog.contract.AuditLogLocationResolver;
+import io.github.bitaron.auditlog.contract.AuditLogRecorder;
 import io.github.bitaron.auditlog.contract.AuditLogTemplateResolver;
 import io.github.bitaron.auditlog.contract.AuditMetricsRecorder;
 import io.github.bitaron.auditlog.contract.AuditTemplateSource;
 import io.github.bitaron.auditlog.core.AuditContextResolver;
 import io.github.bitaron.auditlog.core.AuditLogAspect;
 import io.github.bitaron.auditlog.core.AuditLogTaskExecutor;
+import io.github.bitaron.auditlog.core.AuditLogRetentionService;
 import io.github.bitaron.auditlog.core.AuditLogWriter;
 import io.github.bitaron.auditlog.core.AuditLogger;
+import io.github.bitaron.auditlog.core.AuditSchemaValidator;
 import io.github.bitaron.auditlog.core.AuditTemplateValidator;
 import io.github.bitaron.auditlog.core.DatabaseAuditTemplateSource;
 import io.github.bitaron.auditlog.core.DefaultAuditContextResolver;
+import io.github.bitaron.auditlog.core.DefaultAuditLogRecorder;
 import io.github.bitaron.auditlog.core.FreemarkerTemplateResolver;
 import io.github.bitaron.auditlog.core.JacksonAuditLogArgumentSerializer;
 import io.github.bitaron.auditlog.core.NoOpAuditMetricsRecorder;
@@ -23,6 +27,7 @@ import io.github.bitaron.auditlog.query.AuditLogQueryService;
 import io.github.bitaron.auditlog.query.JpaAuditLogQueryService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
+import javax.sql.DataSource;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
@@ -35,6 +40,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.orm.jpa.SharedEntityManagerCreator;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import java.util.List;
 import java.util.concurrent.Executor;
@@ -176,9 +182,45 @@ public class AuditLogAutoConfiguration {
         return new AuditLogAspect(auditContextResolver, auditLogger);
     }
 
+    /**
+     * Programmatic write facade for callers with no {@code @Audit}-annotated method invocation to
+     * intercept - see {@link AuditLogRecorder}. Depends only on {@link AuditLogger}, not the
+     * aspect, so it's available even to a caller that never triggers any AOP proxying.
+     */
     @Bean
     @ConditionalOnMissingBean
-    public AuditLogQueryService auditLogQueryService(EntityManagerFactory entityManagerFactory) {
-        return new JpaAuditLogQueryService(sharedEntityManager(entityManagerFactory));
+    public AuditLogRecorder auditLogRecorder(AuditLogger auditLogger) {
+        return new DefaultAuditLogRecorder(auditLogger);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public AuditLogQueryService auditLogQueryService(EntityManagerFactory entityManagerFactory,
+                                                       AuditLogProperties auditLogProperties) {
+        return new JpaAuditLogQueryService(
+                sharedEntityManager(entityManagerFactory), auditLogProperties.getQuery().getMaxPageSize());
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "audit.log.schema-validation", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public AuditSchemaValidator auditSchemaValidator(DataSource dataSource) {
+        return new AuditSchemaValidator(dataSource);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "audit.log.retention", name = "enabled", havingValue = "true")
+    public AuditLogRetentionService auditLogRetentionService(EntityManagerFactory entityManagerFactory,
+                                                               PlatformTransactionManager transactionManager,
+                                                               AuditLogProperties auditLogProperties) {
+        AuditLogProperties.Retention retention = auditLogProperties.getRetention();
+        if (retention.getMaxAge() == null) {
+            throw new IllegalStateException(
+                    "audit.log.retention.enabled=true requires audit.log.retention.max-age to be set - "
+                            + "there is no safe default retention window for a compliance artifact");
+        }
+        return new AuditLogRetentionService(sharedEntityManager(entityManagerFactory), transactionManager,
+                retention.getMaxAge(), retention.getCron(), retention.getBatchSize());
     }
 }

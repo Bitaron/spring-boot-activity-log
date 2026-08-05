@@ -12,10 +12,12 @@ import java.lang.annotation.Target;
  * You do not use this annotation directly - the compiler generates it when you place more than
  * one {@link Audit} on the same method or type.
  * <p>
- * <b>Current limitation:</b> the aspect ({@code AuditLogAspect}) binds to {@link Audit} via
- * AspectJ's {@code @annotation()} pointcut designator, which matches a single annotation
- * instance. Multiple {@code @Audit} on one method are valid to declare, but only the first is
- * currently processed - full per-instance firing is planned but not yet implemented.
+ * {@code AuditLogAspect} matches both this container and a bare {@link Audit}, then reflects on
+ * the join point's method with {@code AnnotatedElementUtils.findMergedRepeatableAnnotations} to
+ * recover every declared instance - each fires its own, independently-isolated audit dispatch.
+ * Method-level stacking is fully supported; type-level {@code @Audit} (applying to every method
+ * of a class) remains a separate, unimplemented design question - see the type it targets in
+ * {@link Audit @Target}.
  *
  * @since 2.0
  */

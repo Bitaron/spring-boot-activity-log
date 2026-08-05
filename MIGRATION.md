@@ -112,3 +112,34 @@ These aren't renames - the old behavior was a bug:
 - **Silent delivery loss.** Executor rejection, write failures, and writes still queued at
   shutdown are now counted via the `audit.log.records{outcome=...}` Micrometer counter (when
   Micrometer is present), not just logged at `WARN`.
+
+## New since the initial 2.0.0-SNAPSHOT (still 2.x - additive, nothing below is a breaking change)
+
+All of the following is new; nothing existing was renamed or removed to add it. See `HANDOFF.md`
+for the full rationale behind each and `docs/SCALING.md`/`docs/CLIENT_CODEGEN.md` for the two new
+docs.
+
+| Area | What's new |
+|---|---|
+| `@Audit` | `mode()` attribute (`AuditDeliveryMode`: `INHERIT`/`ASYNC`/`SYNC`) overrides `audit.log.mode` per call site. Default `INHERIT` - existing usages are unaffected. |
+| `@Audit` | Stacking two or more `@Audit` on one method now fires **every** instance, not just the first - a previously-documented limitation (`Audits`' javadoc), now fixed. |
+| Startup | New `AuditSchemaValidator`: fails startup with an actionable message if `audit_log`/`audit_log_message`/`audit_template`/`audit_group` are missing. On by default; `audit.log.schema-validation.enabled=false` to skip. |
+| Reads | `AuditLogQueryService.find` now honors `Pageable.getSort()` (whitelisted to `id`/`createdAt`/`actorId`/`auditType`) and rejects page sizes above `audit.log.query.max-page-size` (default `200`) instead of scanning unbounded. |
+| Reads | New `AuditLogQueryService.findAfter(query, cursor, limit)` + `AuditCursor` - keyset/seek pagination for large tables, independent of how deep into the result set you are. |
+| Writes | New opt-in `AuditLogRetentionService`: scheduled, batched deletion of rows older than `audit.log.retention.max-age`. Off by default (`audit.log.retention.enabled=false`). |
+| Writes | New `AuditLogRecorder` (+ `AuditEventRequest`): record an audit event programmatically, with no `@Audit`-annotated method invocation for AOP to intercept - a message-queue consumer, a batch job, or the new REST server module below. |
+| Server | New optional module `audit-log-spring-boot-server`: a Protobuf-over-HTTP ingestion/query server (`POST /audit-log/events`, `GET /audit-log/records`). Off by default (`audit.log.server.enabled=false`); requires `audit.log.server.api-key` once enabled. |
+| Client | New `audit-log-server-proto` (generated Protobuf types, `.proto` schema bundled in the jar) and `audit-log-java-client` (a typed `RestClient` wrapper) modules for talking to the server module. |
+
+### New configuration properties
+
+| Property | Default | Purpose |
+|---|---|---|
+| `audit.log.schema-validation.enabled` | `true` | Startup table-existence check |
+| `audit.log.query.max-page-size` | `200` | Max page size `find`/`findAfter` accept |
+| `audit.log.retention.enabled` | `false` | Master switch for scheduled purge |
+| `audit.log.retention.max-age` | *(required if enabled)* | Records older than this become eligible for deletion |
+| `audit.log.retention.cron` | `0 0 3 * * *` | When the purge job runs |
+| `audit.log.retention.batch-size` | `1000` | Rows deleted per batch iteration |
+| `audit.log.server.enabled` | `false` | Master switch for the REST server module |
+| `audit.log.server.api-key` | *(required if enabled)* | Shared secret required via the `X-API-Key` header |

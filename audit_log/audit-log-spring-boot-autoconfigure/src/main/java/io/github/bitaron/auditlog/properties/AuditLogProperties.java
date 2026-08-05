@@ -8,6 +8,7 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -110,6 +111,22 @@ public class AuditLogProperties {
     @Valid
     private final Executor executor = new Executor();
 
+    /**
+     * Whether to fail application startup if any of this starter's required tables are missing
+     * from the configured database - see {@code AuditSchemaValidator}. On by default; turn off
+     * for a deployment that already validates its schema some other way.
+     */
+    @Valid
+    private final SchemaValidation schemaValidation = new SchemaValidation();
+
+    /** Bounds and sort rules for {@code AuditLogQueryService} reads - see {@link Query}. */
+    @Valid
+    private final Query query = new Query();
+
+    /** Scheduled deletion of old audit records - off by default; see {@link Retention}. */
+    @Valid
+    private final Retention retention = new Retention();
+
     public enum DeliveryMode {
         ASYNC, SYNC
     }
@@ -126,6 +143,13 @@ public class AuditLogProperties {
         private String requesterId = "X-USER-ID";
         @NotNull
         private String requesterName = "X-USER-NAME";
+    }
+
+    /** See {@link #schemaValidation}. */
+    @Getter
+    @Setter
+    public static class SchemaValidation {
+        private boolean enabled = true;
     }
 
     /** Sizing for the dedicated thread pool audit writes are submitted to. */
@@ -147,5 +171,53 @@ public class AuditLogProperties {
          */
         @Min(0)
         private int awaitTerminationSeconds = 30;
+    }
+
+    /** See {@link #query}. */
+    @Getter
+    @Setter
+    public static class Query {
+        /**
+         * Largest page size {@code AuditLogQueryService.find} accepts; a larger
+         * {@code Pageable} is rejected with {@code IllegalArgumentException} rather than silently
+         * clamped, matching this starter's "fail loud, don't guess" convention elsewhere (see the
+         * A1-A3 fixes in {@code MIGRATION.md}). Guards against one caller-supplied page size
+         * turning into an unbounded table scan as {@code audit_log} grows; see
+         * {@code AuditLogQueryService#findAfter} for keyset pagination once offset pagination
+         * itself becomes the bottleneck, independent of page size.
+         */
+        @Min(1)
+        private int maxPageSize = 200;
+    }
+
+    /** See {@link #retention}. */
+    @Getter
+    @Setter
+    public static class Retention {
+        /**
+         * Master switch for the scheduled retention/purge job - see
+         * {@code AuditLogRetentionService}. Off by default: deleting audit history is a decision
+         * this starter must never make for a consuming application unasked.
+         */
+        private boolean enabled = false;
+
+        /**
+         * Audit records older than this are eligible for deletion. Required (no default) when
+         * {@link #enabled} is {@code true} - there is no safe default retention window to assume
+         * for a compliance artifact.
+         */
+        private Duration maxAge;
+
+        /** Cron expression (Spring's six-field form, seconds first) the purge job runs on. */
+        @NotNull
+        private String cron = "0 0 3 * * *";
+
+        /**
+         * Rows deleted per batch iteration. Purging happens as a loop of bounded batches, oldest
+         * row first, rather than one unbounded {@code DELETE} that could hold a long lock on
+         * {@code audit_log} while a large backlog is cleared.
+         */
+        @Min(1)
+        private int batchSize = 1000;
     }
 }

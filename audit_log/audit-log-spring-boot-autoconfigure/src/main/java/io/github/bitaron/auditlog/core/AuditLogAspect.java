@@ -14,6 +14,7 @@ import org.springframework.context.expression.MethodBasedEvaluationContext;
 import org.springframework.core.DefaultParameterNameDiscoverer;
 import org.springframework.core.Ordered;
 import org.springframework.core.ParameterNameDiscoverer;
+import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.core.annotation.Order;
 import org.springframework.expression.EvaluationContext;
 import org.springframework.expression.Expression;
@@ -23,6 +24,7 @@ import org.springframework.expression.spel.standard.SpelExpressionParser;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 
@@ -44,6 +46,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * Actor/client resolution is delegated to {@link AuditContextResolver} - this aspect only
  * captures what only AOP can see (arguments, return value, exception, duration, the join point)
  * and evaluates {@link Audit#actorExpression()}.
+ * <p>
+ * <b>Repeated {@code @Audit}:</b> the pointcut only selects join points; it does not bind a
+ * single {@link Audit} instance. The advice instead reflects on the join point's {@link Method}
+ * via {@link AnnotatedElementUtils#findMergedRepeatableAnnotations}, which transparently unwraps
+ * the synthetic {@link io.github.bitaron.auditlog.annotation.Audits} container the compiler
+ * generates for two or more stacked {@code @Audit} annotations - so every instance on a method
+ * fires its own, independently-isolated audit dispatch, not just the first.
  *
  * <p><b>Ordering:</b> explicitly ordered one step ahead of {@link Ordered#LOWEST_PRECEDENCE} -
  * the default order Spring gives the {@code @Transactional} advisor when
@@ -97,15 +106,21 @@ public class AuditLogAspect {
      * Invokes the audited method, timing it and recording its outcome regardless of whether it
      * returns normally or throws. The thrown exception (if any) always propagates to the caller
      * unchanged - recording a failed attempt must never itself change what the caller sees.
+     * <p>
+     * The pointcut matches either representation the compiler can produce for
+     * {@code @Repeatable @Audit} - a single {@link Audit} or the synthetic
+     * {@link io.github.bitaron.auditlog.annotation.Audits} container for two or more - without
+     * binding either as an advice parameter; {@link #logActivity} resolves the actual instance(s)
+     * to fire from the join point's {@link Method}.
      *
      * @param joinPoint AspectJ join point providing access to method signature, arguments, and
      *                  the ability to proceed with the actual invocation
-     * @param actLog    The {@link Audit} annotation from the intercepted method
      * @return whatever the audited method returns
      * @throws Throwable whatever the audited method throws, unchanged
      */
-    @Around("@annotation(actLog)")
-    public Object logMethodAction(ProceedingJoinPoint joinPoint, Audit actLog) throws Throwable {
+    @Around("@annotation(io.github.bitaron.auditlog.annotation.Audit) "
+            + "|| @annotation(io.github.bitaron.auditlog.annotation.Audits)")
+    public Object logMethodAction(ProceedingJoinPoint joinPoint) throws Throwable {
         long startNanos = System.nanoTime();
         Object result = null;
         Throwable thrown = null;
@@ -117,31 +132,57 @@ public class AuditLogAspect {
             throw t;
         } finally {
             long durationMillis = (System.nanoTime() - startNanos) / 1_000_000;
-            logActivity(actLog, joinPoint, thrown != null ? thrown : result, thrown != null, durationMillis);
+            logActivity(joinPoint, thrown != null ? thrown : result, thrown != null, durationMillis);
         }
     }
 
     /**
-     * Central logging handler that creates audit context and triggers logging.
+     * Resolves every {@link Audit} instance declared on the intercepted method (one or several -
+     * see the class javadoc) and dispatches one independently-isolated audit record per instance:
+     * a bad {@code actorExpression} or resolver failure on one {@code @Audit} must not prevent a
+     * sibling {@code @Audit} on the same method from still being recorded.
      *
-     * @param actLog          Audit annotation metadata
      * @param joinPoint       Method execution context
      * @param response        Method return value or exception
      * @param exceptionThrown Flag indicating execution outcome
      * @param durationMillis  How long the audited method took to execute (or throw)
      */
-    private void logActivity(Audit actLog, ProceedingJoinPoint joinPoint, Object response, boolean exceptionThrown,
+    private void logActivity(ProceedingJoinPoint joinPoint, Object response, boolean exceptionThrown,
                               long durationMillis) {
-        try {
-            Object args = buildArgs(joinPoint);
-            String expressionActor = resolveActorExpression(actLog, joinPoint, response, exceptionThrown);
-            AuditContext auditContext = auditContextResolver.resolve(
-                    actLog, args, response, exceptionThrown, expressionActor, durationMillis);
-            auditLogger.log(actLog, auditContext);
-        } catch (Exception e) {
-            log.warn("Failed to record audit log for {}#{}", joinPoint.getSignature().getDeclaringTypeName(),
-                    joinPoint.getSignature().getName(), e);
+        Method method = resolveMethod(joinPoint);
+        if (method == null) {
+            return;
         }
+        Set<Audit> audits = AnnotatedElementUtils.findMergedRepeatableAnnotations(method, Audit.class);
+        if (audits.isEmpty()) {
+            return;
+        }
+        Object args;
+        try {
+            args = buildArgs(joinPoint);
+        } catch (Exception e) {
+            log.warn("Failed to capture arguments for audit logging on {}#{}",
+                    joinPoint.getSignature().getDeclaringTypeName(), joinPoint.getSignature().getName(), e);
+            return;
+        }
+        for (Audit actLog : audits) {
+            try {
+                String expressionActor = resolveActorExpression(actLog, joinPoint, response, exceptionThrown);
+                AuditContext auditContext = auditContextResolver.resolve(
+                        actLog, args, response, exceptionThrown, expressionActor, durationMillis);
+                auditLogger.log(actLog, auditContext);
+            } catch (Exception e) {
+                log.warn("Failed to record audit log (auditType={}) for {}#{}", actLog.auditType(),
+                        joinPoint.getSignature().getDeclaringTypeName(), joinPoint.getSignature().getName(), e);
+            }
+        }
+    }
+
+    private Method resolveMethod(ProceedingJoinPoint joinPoint) {
+        if (!(joinPoint.getSignature() instanceof MethodSignature methodSignature)) {
+            return null;
+        }
+        return methodSignature.getMethod();
     }
 
     /**

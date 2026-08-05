@@ -29,7 +29,17 @@
     <modules>
         <module>audit-log-spring-boot-autoconfigure</module>
         <module>audit-log-spring-boot-starter</module>
+        <module>audit-log-server-proto</module>
+        <module>audit-log-spring-boot-server</module>
+        <module>audit-log-java-client</module>
     </modules>
+
+    <!-- Single source of truth for protobuf-java's version - shared by audit-log-server-proto
+         (generated stubs) and audit-log-spring-boot-server (protobuf-java-util, for
+         ProtobufHttpMessageConverter's JSON support), which must always agree. -->
+    <properties>
+        <protobuf.version>3.25.5</protobuf.version>
+    </properties>
 
     <licenses>
         <license>
