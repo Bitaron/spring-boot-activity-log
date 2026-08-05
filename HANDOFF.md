@@ -1,47 +1,73 @@
-# Handoff: audit-log 2.0 redesign
+# Handoff: audit-log 2.0 redesign + v3 (server mode, safety rails, scale)
 
 Status as of the last commit on `claude/project-audit-planning-ztbevf`. Written so another agent
 (or human) can pick this up cold. For the *user-facing* API mapping see
-[`MIGRATION.md`](MIGRATION.md); this document is about the state of the work itself.
+[`MIGRATION.md`](MIGRATION.md); for high-volume operation see
+[`docs/SCALING.md`](docs/SCALING.md); for generating a client in another language see
+[`docs/CLIENT_CODEGEN.md`](docs/CLIENT_CODEGEN.md). This document is about the state of the work
+itself.
 
 ## TL;DR
 
-The v2 redesign is **complete and merged to `main`**. `mvn clean verify` is green across all
-modules: 45 tests in the starter, 2 in the demo app. There is no in-flight work and no known
-broken state. What remains is all optional/deferred - see "Not done (deliberately)" below.
+Two passes are **complete**, not merged to `main` yet as of this commit (branch was restarted from
+`main` after the v2 pass merged, per the task's branch-reuse rule):
+
+- **v2** (WP0-WP7): the architecture/API redesign - package rename, annotation redesign, commit-
+  aware dispatch, data model fix, typed config, read API. See the "v2" sections below.
+- **v3** (WP8-WP14, this pass): per-call delivery override, startup schema validation, large-data
+  handling (pagination/retention/partitioning docs), a programmatic write facade, an optional
+  Protobuf REST server, and client codegen support.
+
+`mvn clean install` is green across all **7 modules**: 69 tests total. There is no in-flight work
+and no known broken state.
 
 ## How to verify you're in a good state
 
 ```bash
-mvn clean verify                                        # all modules, must be green
-mvn -pl audit_log/audit-log-spring-boot-autoconfigure test   # the starter's 45 tests
-cd audit_log_usage_example && mvn spring-boot:run       # then curl localhost:8080/test
+mvn clean install                                             # all modules, must be green
+mvn -pl audit_log/audit-log-spring-boot-autoconfigure test     # core starter's tests
+mvn -pl audit_log/audit-log-spring-boot-server test             # REST server module's tests
+mvn -pl audit_log/audit-log-java-client test                    # client module's tests (spins up
+                                                                  # the real server at a random port)
+cd audit_log_usage_example && mvn spring-boot:run                # then curl localhost:8080/test
 ```
 
-Requires **JDK 21** (not 25 - see "Known constraints").
+Requires **JDK 21** (not 25 - see "Known constraints"). The `audit-log-server-proto` module
+downloads a `protoc` binary via `os-maven-plugin`/`protobuf-maven-plugin` on first build - this
+needs outbound access to Maven Central (or a mirror); verified working in this session's sandboxed
+environment via its pre-configured proxy.
 
 ## Repository layout
 
 ```
 pom.xml                                        aggregator (version 2.0.0-SNAPSHOT)
 MIGRATION.md                                   1.x -> 2.x API + schema mapping
+docs/SCALING.md                                large-data operation: pagination, retention, partitioning
+docs/CLIENT_CODEGEN.md                         generating a client for the REST server, any language
 db/migration/V2__audit_log_v2.sql              1.x -> 2.x schema migration (PostgreSQL dialect)
 audit_log/
-  pom.xml                                      parent for the two starter modules
-  audit-log-spring-boot-autoconfigure/         ALL implementation code + tests + README
+  pom.xml                                      parent for all 5 starter/server modules
+  audit-log-spring-boot-autoconfigure/         core implementation code + tests + README
   audit-log-spring-boot-starter/               pom-only aggregator; what consumers depend on
+  audit-log-server-proto/                      .proto IDL + generated Java stubs, no Spring dep
+  audit-log-spring-boot-server/                optional REST ingestion/query server (off by default)
+  audit-log-java-client/                       typed Java HTTP client for the server module
 audit_log_usage_example/                       runnable demo app + integration test
 ```
 
-Package root: `io.github.bitaron.auditlog` (all-lowercase - it was `auditLog` in 1.x).
+Package root: `io.github.bitaron.auditlog` (all-lowercase - it was `auditLog` in 1.x). The server/
+client modules use `io.github.bitaron.auditlog.server` / `.client` / `.server.proto.v1`.
 
 ## What each class is for
 
+### Core (`audit-log-spring-boot-autoconfigure`)
+
 | Package | Class | Role |
 |---|---|---|
-| `annotation` | `Audit` | The user-facing annotation. `templates()`, `actorSource()`, `actorExpression()`, `auditType()`, `actionName()`, `actionType()`, `groupName()` |
-| | `ActorSource` | `CONTEXT` / `SYSTEM` / `EXPRESSION` - replaced the 1.x `isActorSystem`/`isActorCommon` booleans |
-| | `Audits` | `@Repeatable` container for `Audit` (see "Known limitations") |
+| `annotation` | `Audit` | The user-facing annotation. `templates()`, `actorSource()`, `actorExpression()`, `auditType()`, `actionName()`, `actionType()`, `groupName()`, **`mode()`** (v3: per-call delivery override) |
+| | `ActorSource` | `CONTEXT` / `SYSTEM` / `EXPRESSION` |
+| | `AuditDeliveryMode` | **(v3)** `INHERIT` / `ASYNC` / `SYNC` - `Audit#mode()`'s type, distinct from `AuditLogProperties.DeliveryMode` on purpose (see "Decisions") |
+| | `Audits` | `@Repeatable` container for `Audit` - **now fully processed**, see "Decisions" #7 below (this was a known limitation in the v2 handoff; fixed in v3/WP8) |
 | | `AuditIgnore` | Marks a parameter to be replaced with a placeholder before serialization |
 | `autoconfigure` | `AuditLogAutoConfiguration` | Everything is wired here; every bean is `@ConditionalOnMissingBean` |
 | | `AuditLogEntityScanRegistrar` | Adds the starter's entities to the host's scan *additively* - do not regress this |
@@ -53,74 +79,148 @@ Package root: `io.github.bitaron.auditlog` (all-lowercase - it was `auditLog` in
 | | `AuditLogGenericDataGetter` | SPI: actor/client resolution for `ActorSource.CONTEXT` |
 | | `AuditLogLocationResolver` | SPI: IP -> geographic location (none bundled) |
 | | `AuditMetricsRecorder` | SPI: delivery-outcome counters |
-| `core` | `AuditLogAspect` | Single `@Around` advice, `@Order(LOWEST_PRECEDENCE - 1)`. Captures args/result/exception/duration, evaluates `actorExpression` SpEL (cached per `Method`) |
+| | **`AuditLogRecorder`** | **(v3/WP12)** Programmatic write facade - record an event with no `@Audit` join point |
+| `core` | `AuditLogAspect` | Single `@Around` advice, `@Order(LOWEST_PRECEDENCE - 1)`. **(v3)** pointcut now matches both `@Audit` and the synthetic `@Audits` container; resolves every declared instance via `AnnotatedElementUtils.findMergedRepeatableAnnotations` instead of binding one |
 | | `AuditContextResolver` / `DefaultAuditContextResolver` | The **only** place that reads ambient request state |
-| | `AuditLogger` | Delivery-mode dispatch: SYNC direct, ASYNC deferred to `afterCommit` when a tx is active |
+| | `AuditLogger` | Delivery-mode dispatch: SYNC direct, ASYNC deferred to `afterCommit` when a tx is active. **(v3)** `effectiveMode()` resolves `Audit#mode()` against the global default first |
 | | `AuditLogWriter` | `@Transactional` persistence. Two entry points (`persistRequiresNew` / `persistShared`) - separate bean from `AuditLogger` so the proxy is actually invoked |
 | | `AuditLogTaskExecutor` | Dedicated pool; graceful shutdown accounting + MDC propagation |
 | | `AuditTemplateValidator` | Opt-in startup validation of `@Audit(templates=...)` |
+| | **`AuditSchemaValidator`** | **(v3/WP10)** Opt-in-by-default startup check that the 4 required tables exist; raw JDBC, one connection per table |
+| | **`AuditLogRetentionService`** | **(v3/WP11)** Opt-in scheduled, batched deletion of old rows; owns its own `ThreadPoolTaskScheduler`, not `@EnableScheduling` |
+| | **`DefaultAuditLogRecorder`** | **(v3/WP12)** Builds `AuditContext` directly + synthesizes an `Audit` annotation via `AnnotationUtils.synthesizeAnnotation` to reuse `AuditLogWriter`/`AuditLogger` unchanged |
 | | `FreemarkerTemplateResolver` | Default renderer; LRU-bounded compiled-template cache, `?api` disabled, `SAFER_RESOLVER` |
 | | `JacksonAuditLogArgumentSerializer` | Default serializer; placeholders, masking, valid-JSON truncation |
 | `model` | `AuditContext` | Immutable record passed through the whole pipeline |
+| | **`AuditEventRequest`** | **(v3/WP12)** Immutable record for `AuditLogRecorder#record` - the non-AOP write path's input |
 | `entity` | `AuditLog` | One row per invocation. `@Immutable`, id-based equals/hashCode |
 | | `AuditLogMessage` | Child rows: one per rendered template, keyed by `templateName` |
 | | `AuditOutcome` | `SUCCESS` / `FAILURE` |
-| `query` | `AuditLogQueryService` / `JpaAuditLogQueryService` | The supported read API |
+| `query` | `AuditLogQueryService` / `JpaAuditLogQueryService` | The supported read API. **(v3)** page-size cap, sort whitelist, `findAfter` keyset pagination |
 | | `AuditQuery` / `AuditRecord` | Filter + immutable projection |
-| `properties` | `AuditLogProperties` | `@Validated @ConfigurationProperties("audit.log")`, nested `Headers` and `Executor` |
+| | **`AuditCursor`** | **(v3/WP11)** `(createdAt, id)` position for `findAfter` |
+| `properties` | `AuditLogProperties` | `@Validated @ConfigurationProperties("audit.log")`. Nested: `Headers`, `Executor`, **`SchemaValidation`, `Query`, `Retention`** (v3) |
+
+### Server/client modules (v3/WP13-14)
+
+| Module | Package | Class | Role |
+|---|---|---|---|
+| `audit-log-server-proto` | `server.proto.v1` | `AuditEventRequest`/`AuditEventResponse`/`AuditRecordProto`/`AuditQueryRequest`/`AuditQueryResponse`/`AuditOutcomeProto` | Generated from `audit_event.proto`; no Spring dependency |
+| `audit-log-spring-boot-server` | `server` | `AuditLogServerAutoConfiguration` | Gated by `audit.log.server.enabled` (default `false`, no `matchIfMissing`); registers `ProtobufHttpMessageConverter` |
+| | | `AuditIngestController` | `POST /audit-log/events` -> `AuditLogRecorder` |
+| | | `AuditQueryController` | `GET /audit-log/records` -> `AuditLogQueryService` |
+| | | `ApiKeyAuthFilter` | Requires `X-API-Key` matching `audit.log.server.api-key` on every `/audit-log/*` request |
+| | | `AuditServerExceptionHandler` | Maps `IllegalArgumentException` -> `400` |
+| | | `ProtoMapper` | Wire<->domain type mapping, kept in one place |
+| `audit-log-java-client` | `client` | `AuditLogHttpClient` | Thin `RestClient` wrapper; the module a Java consumer of server mode depends on |
 
 ## Decisions that are load-bearing - do not "simplify" these
 
 Each of these was chosen against an obvious-looking alternative that is actually wrong. Changing
-one back will reintroduce a real bug.
+one back will reintroduce a real bug. **1-6 are from the v2 pass; 7-13 are new in v3.**
 
 1. **`AuditLogAutoConfiguration` never registers an `EntityManager`-typed bean.** Internal
    consumers each build their own shared-EntityManager proxy from `EntityManagerFactory` via the
    private `sharedEntityManager(...)` helper. Both `@Bean(defaultCandidate = false)` and
-   `@Bean(autowireCandidate = false)` were tried and **empirically fail**: `defaultCandidate` only
-   de-prioritizes among multiple same-type candidates (a no-op when ours is the only one -
-   the common case), and `autowireCandidate` also blocks the starter's own qualified injection.
-   Guarded by `starterAddsNoEntityManagerTypedBeanToTheHostContext`.
+   `@Bean(autowireCandidate = false)` were tried and **empirically fail**. Guarded by
+   `starterAddsNoEntityManagerTypedBeanToTheHostContext`.
 
 2. **`jakarta.validation-api` is `provided` scope, not compile.** Spring Boot's
    `ConfigurationPropertiesBinder` tries to build a JSR-303 validator whenever
    `jakarta.validation.Validator` is *visible on the classpath* and throws
-   `NoProviderFoundException` if no implementation is present. Making it transitive would break
-   every consumer that doesn't happen to depend on `spring-boot-starter-validation`. This was
-   caught by the demo app failing during WP6.
+   `NoProviderFoundException` if no implementation is present.
 
 3. **`AuditLogAspect` is `@Order(Ordered.LOWEST_PRECEDENCE - 1)`.** One step ahead of the default
-   `@Transactional` advisor order, so it deterministically wraps *outside* transactional advice
-   rather than tying at the same order (undefined). Verified end-to-end through a real AOP proxy
-   by `AuditLogAspectTransactionOrderingTest`.
+   `@Transactional` advisor order, so it deterministically wraps *outside* transactional advice.
 
 4. **`AuditLogWriter` is a separate bean from `AuditLogger`.** Self-invocation would bypass the
-   `@Transactional` proxy entirely.
+   `@Transactional` proxy entirely. The same reasoning is why `AuditLogRetentionService` (v3) uses
+   `TransactionTemplate` instead of a `@Transactional` method on itself - it only has one method
+   that needs a transaction, and self-invocation from `runOnce()` would bypass any proxy anyway.
 
 5. **The executor is not `@Async`/`@EnableAsync`.** Turning on async proxying is a context-wide,
-   consumer-visible change a library shouldn't impose.
+   consumer-visible change a library shouldn't impose. **(v3)** `AuditLogRetentionService` applies
+   the identical reasoning to scheduling: it owns its own `ThreadPoolTaskScheduler` rather than
+   using `@Scheduled`/`@EnableScheduling`.
 
-6. **`AuditLogEntityScanRegistrar` adds to - never replaces - the host's entity scan.** The
-   original 1.x `@EntityScan` silently broke host entity discovery. Guarded by
+6. **`AuditLogEntityScanRegistrar` adds to - never replaces - the host's entity scan.** Guarded by
    `hostApplicationOwnEntityAndRepositoryStillDiscovered`.
 
-7. **`@Inherited` on both `Audit` and `Audits`.** javac rejects a `@Repeatable` annotation being
-   `@Inherited` when its container isn't.
+7. **`Audits`/repeated `@Audit` is now fully processed (v3/WP8) - the pointcut no longer binds a
+   single annotation instance.** `AuditLogAspect`'s `@Around` matches either representation the
+   compiler can produce (`@annotation(Audit) || @annotation(Audits)`) without binding either as a
+   parameter; the advice resolves every instance via
+   `AnnotatedElementUtils.findMergedRepeatableAnnotations(method, Audit.class)` and dispatches one
+   independently-isolated record per instance. If you see code trying to bind `Audit actLog`
+   directly on the pointcut again, that's the v2-era bug reintroduced - it only fires the first of
+   several stacked annotations. Guarded by `AuditLogAspectTest`.
+
+8. **`AuditDeliveryMode` (the `Audit#mode()` type) is a distinct enum from
+   `AuditLogProperties.DeliveryMode`, not a reuse.** The annotation attribute's type becomes part
+   of every consumer's compiled bytecode; coupling it to the properties package for two overlapping
+   enum constants isn't worth it, and `INHERIT` is meaningless for the global property itself.
+
+9. **`AuditSchemaValidator` probes via raw JDBC (a fresh `Connection` per table), never JPA.** A
+   `PersistenceException` from one missing-table probe would poison that `EntityManager`'s
+   transaction for every table checked afterward - raw JDBC sidesteps entity-manager lifecycle
+   handling entirely for what's a four-query check.
+
+10. **`JpaAuditLogQueryService.find`'s sort is whitelisted to `id`/`createdAt`/`actorId`/
+    `auditType`.** These are the only indexed/filterable `AuditLog` columns; accepting arbitrary
+    sort properties would both build unvalidated JPQL from caller input and force full sorts on
+    unindexed columns.
+
+11. **`AuditLogRecorder`'s implementation synthesizes a real `Audit` annotation instance via
+    Spring's `AnnotationUtils.synthesizeAnnotation` (a dynamic proxy) rather than duplicating
+    `AuditLogWriter`/`AuditLogger`'s dispatch logic for a caller with no join point.** This was
+    verified empirically (`AuditLogRecorderTest`) to produce byte-for-byte the same
+    `AuditLog`/`AuditLogMessage` shape as the real `@Audit` + AOP path.
+
+12. **`audit-log-spring-boot-server` depends on `audit-log-spring-boot-starter`, not
+    `audit-log-spring-boot-autoconfigure` directly.** `AuditLogAutoConfiguration` always attempts
+    to register an `AuditLogAspect` bean (only conditioned on `audit.log.enabled`, which this
+    module needs `=true`), and that bean's class references AspectJ types at the bytecode level -
+    loading it without `spring-boot-starter-aop` actually on the runtime classpath throws
+    `NoClassDefFoundError`, not a graceful skip. **Verified empirically** - this exact mistake was
+    made and caught during this session; see the git history on this branch.
+
+13. **`ProtobufHttpMessageConverter`'s JSON support needs `protobuf-java-util` (for
+    `com.google.protobuf.util.JsonFormat`) on the classpath - a runtime classpath probe, not a
+    declared dependency of the converter class itself.** Without it, JSON requests to the server
+    module silently get `415`, not an error naming what's missing. **Also verified empirically** -
+    caught the same way as #12, via a failing `AuditLogServerIntegrationTest` run before the fix.
 
 ## Test inventory (what's actually guarded)
 
+### v2 (unchanged)
+
 | Test | Guards |
 |---|---|
-| `AuditLogAutoConfigurationTest` | Bean registration, `audit.log.enabled=false`, user overrides, **host entity/repository discovery**, **no `EntityManager` bean added**, **`AutoConfiguration.imports` names a loadable class**, properties-only templates, `fail-on-missing-template` both ways, executor-size validation, query service |
-| `AuditLogWriterTest` | Rendering, missing/broken templates, one-row-per-event with N messages, `duration_ms`, `data` excludes actor fields, masking, servlet-arg safety, **rollback leaves zero rows (ASYNC + SYNC)**, commit persists |
-| `AuditLoggerTest` | Dispatch mode matrix, commit deferral, rollback never dispatches, failure/rejection counted not propagated |
-| `AuditLogAspectTransactionOrderingTest` | **Real `@Transactional @Audit` proxy**: business write rolls back, audit still records `FAILURE`; commit path records `SUCCESS` |
+| `AuditLogAutoConfigurationTest` | Bean registration, `audit.log.enabled=false`, user overrides, host entity/repository discovery, no `EntityManager` bean added, `AutoConfiguration.imports` names a loadable class, properties-only templates, `fail-on-missing-template` both ways, executor-size validation, query service |
+| `AuditLogWriterTest` | Rendering, missing/broken templates, one-row-per-event with N messages, `duration_ms`, `data` excludes actor fields, masking, servlet-arg safety, rollback leaves zero rows (ASYNC + SYNC), commit persists |
+| `AuditLoggerTest` | Dispatch mode matrix, commit deferral, rollback never dispatches, failure/rejection counted not propagated, **(v3) per-call mode override wins over the global default, both directions** |
+| `AuditLogAspectTransactionOrderingTest` | Real `@Transactional @Audit` proxy: business write rolls back, audit still records `FAILURE`; commit path records `SUCCESS` |
 | `AuditLogTaskExecutorTest` | Shutdown accounting, MDC propagation |
 | `FreemarkerTemplateResolverTest` | Rendering, cache reuse, bounded cache, `?api` blocked |
 | `JacksonAuditLogArgumentSerializerTest` | Placeholders, `Throwable` compaction, deep masking, valid-JSON truncation |
 | `AuditLogTestControllerIntegrationTest` (demo) | Full stack via MockMvc: outcome, duration, child messages, exception propagation |
 
-## Not done (deliberately - from the plan's "out of scope")
+### v3 (new this pass)
+
+| Test | Guards |
+|---|---|
+| `AuditLogAspectTest` | **WP8**: two stacked `@Audit` on one method each dispatch independently, through real AOP; **WP9**: a per-call `SYNC` override is visible on the caller's thread with no async wait, through real AOP |
+| `AuditSchemaValidatorTest` | **WP10**: missing tables fail startup with a message naming them + the migration file path; present tables start cleanly; `enabled=false` skips the check |
+| `JpaAuditLogQueryServiceTest` | **WP11**: oversized page size and unrecognized sort property both rejected; keyset pagination returns stable, non-overlapping pages |
+| `AuditLogRetentionServiceTest` | **WP11**: batched purge deletes only rows older than the cutoff, including child messages; newer rows survive |
+| `AuditLogRecorderTest` | **WP12**: `record(...)` produces the same `AuditLog`/`AuditLogMessage` shape as an equivalent `@Audit`-annotated call |
+| `AuditLogServerAutoConfigurationTest` | **WP13**: disabled by default (no controllers registered); enabling without an API key fails startup; both controllers registered once configured |
+| `AuditLogServerIntegrationTest` | **WP13**: real `MockMvc` round-trip through both JSON and binary-`application/x-protobuf` ingest, `401` without the API key, query returns the ingested row |
+| `AuditLogHttpClientTest` | **WP14**: starts the real server module at a random port; one `ingest` + one `query` call round-trips through the generated Protobuf types with zero manual (de)serialization in the test |
+
+## Not done (deliberately)
+
+### From the v2 pass's "out of scope"
 
 - **Transactional outbox / guaranteed delivery.** `audit.log.mode=SYNC` covers the compliance case.
 - **Replacing FreeMarker with SpEL for message bodies.** SpEL is only used for `actorExpression`.
@@ -128,29 +228,65 @@ one back will reintroduce a real bug.
   credentials. Version is still `2.0.0-SNAPSHOT`.
 - **JDK 25.** Blocked on Lombok (see below).
 
+### From the v3 pass's "out of scope" (see the plan file's full rationale for each)
+
+- **Export & right-to-erasure (CSV export, actor-scoped purge).** Explicitly excluded per user
+  instruction for this round - not designed at all, not even stubbed. If it comes back,
+  `AuditLogRetentionService`'s batched-delete mechanics are the natural thing to extend.
+- **Multi-tenancy, alerting/webhooks, pluggable non-JPA storage.** Each is a separate, larger
+  design decision than this pass's scope.
+- **A runtime `audit.log.id-generation=IDENTITY|SEQUENCE` property**, despite being mentioned in
+  the original plan text for WP11. Deliberately **not implemented** after closer analysis: JPA's
+  `@GeneratedValue` strategy is effectively fixed at entity-mapping time, and a property that
+  silently "just switches" the ID strategy at runtime either lies about that or races the real
+  schema migration switching strategies actually requires. `docs/SCALING.md` documents the
+  IDENTITY-vs-batching limitation and the exact migration SQL a consumer would apply to fork the
+  entities themselves - judged more honest than shipping a fragile/misleading property. **Flag this
+  to the user if they specifically wanted the property, not just the documentation.**
+- **Message-queue-based server ingestion (Kafka/RabbitMQ consumer).** REST only for this round; a
+  future MQ consumer would reuse `AuditLogRecorder` (WP12) and the same `.proto` schema.
+- **A gRPC service on the same `.proto` schema.** REST was the explicit ask; the schema is written
+  so gRPC could reuse it later without a rewrite, but none exists today.
+- **Pre-built/published codegen packages for non-Java languages.** `docs/CLIENT_CODEGEN.md` makes
+  self-service `protoc` codegen work (verified end-to-end for Python); publishing per-language
+  packages to PyPI/npm/etc. is a packaging decision, not attempted.
+- **Build-time (Maven-plugin) DB schema check.** Only the startup check (`AuditSchemaValidator`,
+  WP10) exists; a build-time variant needs its own design (CI credentials, which phase to bind to).
+
 ## Known constraints and limitations
 
-- **JDK 21 only.** Lombok doesn't generate members correctly under JDK 25's compiler internals -
-  every `@Getter`/`@Setter`/`@Slf4j` becomes "cannot find symbol". Dropping Lombok (entities ->
-  records isn't possible for JPA, but hand-written accessors are) would unblock this.
-- **`@Repeatable`/`@Target(TYPE)` on `@Audit` are declared but not fully processed.** The aspect
-  binds via `@annotation(actLog)`, which matches a single method-level annotation instance.
-  Multiple `@Audit` on one method are legal to declare but only the first fires; type-level
-  `@Audit` isn't picked up. Documented in `Audits`' javadoc. Implementing this means switching the
-  pointcut and iterating `getAnnotationsByType`.
+- **JDK 21 only.** Lombok doesn't generate members correctly under JDK 25's compiler internals.
 - **JSR-303 constraints are unenforced without a validator on the consumer's classpath.** By
   design (see decision #2), but it means `@Min` violations bind silently in that case.
 - **`fail-on-missing-template` scans every bean's methods at startup.** Off by default for that
   reason.
-- **`trace_id` is read from MDC key `traceId`.** Correct for Micrometer Tracing's default; a
-  consumer using a different key gets nulls.
+- **`trace_id` is read from MDC key `traceId`.** A consumer using a different key gets nulls.
 - **`V2__audit_log_v2.sql` is PostgreSQL dialect** and backfills `outcome='SUCCESS'` for
-  pre-existing rows, since 1.x never recorded outcome. Adjust for other databases.
+  pre-existing rows. Adjust for other databases.
+- **(v3) `AuditSchemaValidator` checks table *existence* only, not column-level schema drift.** A
+  table present but missing a v2-era column (e.g. `outcome`) would pass this check and fail later
+  at the first write - a deliberate scope limit (see `AuditSchemaValidator`'s javadoc), not a bug.
+- **(v3) `AuditEventRequest`'s `args`/`result`/`exception` fields, when populated via the REST
+  server's `args_json`/`result_json`/`exception_json` proto fields, are stored as opaque,
+  string-escaped JSON inside the `data` column - not structurally merged.** Documented as a v1
+  limitation directly in `audit_event.proto`; a future revision could accept a
+  `google.protobuf.Struct` for true structural passthrough without a breaking change.
+- **(v3) `ApiKeyAuthFilter` is a single static shared secret** - no per-caller identity, rotation,
+  or revocation. Explicitly documented as a first cut on `AuditLogServerProperties.apiKey`'s
+  javadoc; production deployments should front the server module with real authn/authz.
+- **(v3) The `audit-log-server-proto` module's build requires downloading a `protoc` binary
+  on first build** (via `os-maven-plugin`'s OS/arch detection + `protobuf-maven-plugin`). Works
+  from Maven Central; an air-gapped/offline build environment would need a local mirror or a
+  pre-populated `~/.m2` cache.
 
 ## Git state
 
-- Branch `claude/project-audit-planning-ztbevf`, merged into `main`.
-- PR #1 (the earlier Phase 0-6 triage pass) is merged. The v2 work was rebased onto the resulting
-  `main` mid-session, so history is linear.
-- The plan this work followed is at `/root/.claude/plans/go-through-this-project-starry-bear.md`
-  (agent-local, not in the repo) - WP0 through WP7, all complete.
+- Branch `claude/project-audit-planning-ztbevf` was **restarted from `main`** at the start of this
+  (v3) pass, since the branch's prior (v2) content had already been merged - per the task's
+  branch-reuse rule, a merged branch is never stacked on top of, it's rebuilt from the current
+  default branch.
+- v2 (WP0-WP7) is merged into `main` already (see the merge commit preceding this branch's own
+  history). v3 (WP8-WP14, this pass) is **not yet merged** as of this commit - it's pushed to
+  `claude/project-audit-planning-ztbevf`, ready for review/PR.
+- The plan this pass followed is at `/root/.claude/plans/go-through-this-project-starry-bear.md`
+  (agent-local, not in the repo) - WP8 through WP14, all complete, one commit per WP.

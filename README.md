@@ -46,5 +46,17 @@ For a realistic run against PostgreSQL instead: `docker compose up -d` in
 - **`audit_log/audit-log-spring-boot-starter`** - the pom-only dependency aggregator consuming
   applications should actually depend on (pulls in the autoconfigure module plus
   `spring-boot-starter-aop`).
+- **`audit_log/audit-log-server-proto`** - the Protobuf (`.proto`) wire schema and generated Java
+  stubs for the REST server module below, with no Spring dependency of its own. See
+  [`docs/CLIENT_CODEGEN.md`](docs/CLIENT_CODEGEN.md) to generate a client in any language directly
+  from the schema.
+- **`audit_log/audit-log-spring-boot-server`** - an optional REST ingestion/query server
+  (`POST /audit-log/events`, `GET /audit-log/records`) for callers with no `@Audit`-annotated
+  method invocation to intercept. Off by default - see `audit.log.server.*` properties in
+  [`MIGRATION.md`](MIGRATION.md).
+- **`audit_log/audit-log-java-client`** - a typed Java HTTP client for the server module above.
 - **`audit_log_usage_example`** - a minimal Spring Boot app wiring the starter in, used both as a
   runnable demo and as an integration test target (`mvn test` in that module).
+
+For large-data operation (pagination at scale, retention, table partitioning) see
+[`docs/SCALING.md`](docs/SCALING.md).
