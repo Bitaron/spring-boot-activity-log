@@ -31,6 +31,7 @@
         <module>audit-log-spring-boot-starter</module>
         <module>audit-log-server-proto</module>
         <module>audit-log-spring-boot-server</module>
+        <module>audit-log-java-client</module>
     </modules>
 
     <!-- Single source of truth for protobuf-java's version - shared by audit-log-server-proto

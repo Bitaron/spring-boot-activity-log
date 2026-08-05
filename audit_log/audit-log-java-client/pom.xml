@@ -11,10 +11,10 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>audit-log-server-proto</artifactId>
+    <artifactId>audit-log-java-client</artifactId>
     <name>${project.groupId}:${project.artifactId}</name>
     <packaging>jar</packaging>
-    <description>Protobuf IDL and generated Java stubs for the audit-log REST server's wire format. Depend on this module directly for typed Java request/response classes with no Spring dependency - see docs/CLIENT_CODEGEN.md at the repository root for generating clients in other languages from the same .proto file.</description>
+    <description>Typed Java HTTP client for the audit-log-spring-boot-server REST module - the module a Java consumer of server mode actually depends on. Generated request/response types come from audit-log-server-proto; only the thin RestClient wrapper here is hand-written. See docs/CLIENT_CODEGEN.md at the repository root for generating a client in a different language directly from the same .proto schema.</description>
     <url>https://github.com/Bitaron/spring-boot-activity-log</url>
 
     <licenses>
@@ -52,55 +52,63 @@
 
     <dependencies>
         <dependency>
-            <groupId>com.google.protobuf</groupId>
-            <artifactId>protobuf-java</artifactId>
-            <version>${protobuf.version}</version>
+            <groupId>io.github.bitaron</groupId>
+            <artifactId>audit-log-server-proto</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- RestClient (since Spring Framework 6.1 / Boot 3.2) - not spring-boot-starter-web:
+             this is a plain library any Java caller can use, not necessarily a Spring Boot
+             application itself. Falls back to the JDK's own java.net.http.HttpClient with no
+             further dependency needed (Spring auto-detects Apache HttpClient5/OkHttp only if
+             present; neither is declared here). -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
+        </dependency>
+
+        <!--
+            Test-only: stands up the real server module (audit-log-spring-boot-server) at a random
+            port so AuditLogHttpClientTest exercises a real HTTP round trip, not a mock.
+        -->
+        <dependency>
+            <groupId>io.github.bitaron</groupId>
+            <artifactId>audit-log-spring-boot-server</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!--
+            spring-tx/spring-orm/hibernate-core/spring-data-commons are all "provided" in
+            audit-log-spring-boot-autoconfigure's own pom (see its comment on why), so none of
+            them flow transitively through audit-log-spring-boot-server above (also test-scoped
+            here, and Maven never propagates a dependency's own test-scoped deps at all) - needed
+            directly here for ClientTestServerApplication's JPA context to actually start.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
     <build>
-        <!--
-            Ships the .proto sources themselves inside the built jar (under proto/), not just the
-            generated Java stubs - so protoc can be pointed directly at a resolved dependency
-            (e.g. unzip the jar, or a build tool that reads dependency jars directly) instead of a
-            hand-copied file. See docs/CLIENT_CODEGEN.md at the repository root.
-        -->
-        <resources>
-            <resource>
-                <directory>src/main/proto</directory>
-                <targetPath>proto</targetPath>
-            </resource>
-        </resources>
-        <extensions>
-            <!-- Resolves ${os.detected.classifier} (e.g. linux-x86_64) so protocArtifact below
-                 pulls the right prebuilt protoc binary for whatever machine runs this build -
-                 no protoc installation required. -->
-            <extension>
-                <groupId>kr.motd.maven</groupId>
-                <artifactId>os-maven-plugin</artifactId>
-                <version>1.7.1</version>
-            </extension>
-        </extensions>
         <plugins>
-            <plugin>
-                <groupId>org.xolstice.maven.plugins</groupId>
-                <artifactId>protobuf-maven-plugin</artifactId>
-                <version>0.6.1</version>
-                <configuration>
-                    <protocArtifact>com.google.protobuf:protoc:${protobuf.version}:exe:${os.detected.classifier}</protocArtifact>
-                </configuration>
-                <executions>
-                    <execution>
-                        <goals>
-                            <goal>compile</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.15.0</version>
+                <configuration>
+                    <parameters>true</parameters>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -111,6 +119,19 @@
                         <id>attach-sources</id>
                         <goals>
                             <goal>jar-no-fork</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.8.0</version>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <goals>
+                            <goal>jar</goal>
                         </goals>
                     </execution>
                 </executions>
