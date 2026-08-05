@@ -11,6 +11,7 @@ import io.github.bitaron.auditlog.core.AuditLogAspect;
 import io.github.bitaron.auditlog.core.AuditLogTaskExecutor;
 import io.github.bitaron.auditlog.core.AuditLogWriter;
 import io.github.bitaron.auditlog.core.AuditLogger;
+import io.github.bitaron.auditlog.core.AuditSchemaValidator;
 import io.github.bitaron.auditlog.core.AuditTemplateValidator;
 import io.github.bitaron.auditlog.core.DatabaseAuditTemplateSource;
 import io.github.bitaron.auditlog.core.DefaultAuditContextResolver;
@@ -23,6 +24,7 @@ import io.github.bitaron.auditlog.query.AuditLogQueryService;
 import io.github.bitaron.auditlog.query.JpaAuditLogQueryService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
+import javax.sql.DataSource;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
@@ -180,5 +182,12 @@ public class AuditLogAutoConfiguration {
     @ConditionalOnMissingBean
     public AuditLogQueryService auditLogQueryService(EntityManagerFactory entityManagerFactory) {
         return new JpaAuditLogQueryService(sharedEntityManager(entityManagerFactory));
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "audit.log.schema-validation", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public AuditSchemaValidator auditSchemaValidator(DataSource dataSource) {
+        return new AuditSchemaValidator(dataSource);
     }
 }

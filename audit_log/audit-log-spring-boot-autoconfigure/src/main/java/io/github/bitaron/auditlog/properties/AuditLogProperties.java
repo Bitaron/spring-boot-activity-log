@@ -110,6 +110,14 @@ public class AuditLogProperties {
     @Valid
     private final Executor executor = new Executor();
 
+    /**
+     * Whether to fail application startup if any of this starter's required tables are missing
+     * from the configured database - see {@code AuditSchemaValidator}. On by default; turn off
+     * for a deployment that already validates its schema some other way.
+     */
+    @Valid
+    private final SchemaValidation schemaValidation = new SchemaValidation();
+
     public enum DeliveryMode {
         ASYNC, SYNC
     }
@@ -126,6 +134,13 @@ public class AuditLogProperties {
         private String requesterId = "X-USER-ID";
         @NotNull
         private String requesterName = "X-USER-NAME";
+    }
+
+    /** See {@link #schemaValidation}. */
+    @Getter
+    @Setter
+    public static class SchemaValidation {
+        private boolean enabled = true;
     }
 
     /** Sizing for the dedicated thread pool audit writes are submitted to. */
