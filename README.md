@@ -3,7 +3,31 @@
 Aggregator repo for [`audit-log`](audit_log/audit-log-spring-boot-autoconfigure/README.md), a
 Spring Boot starter that records audit trail entries for `@Audit`-annotated methods, and
 [`audit_log_usage_example`](audit_log_usage_example), a runnable demo app that consumes it. See
-[`MIGRATION.md`](MIGRATION.md) if you're upgrading from `1.x`.
+[`MIGRATION.md`](MIGRATION.md) if you're upgrading from `1.x`, or
+[`AGENTS.md`](AGENTS.md) if you're a coding agent about to make a change here.
+
+## Quick start
+
+```xml
+<dependency>
+    <groupId>io.github.bitaron</groupId>
+    <artifactId>audit-log-spring-boot-starter</artifactId>
+    <version>2.0.0-SNAPSHOT</version>
+</dependency>
+```
+
+```java
+@Audit(auditType = "USER_MANAGEMENT", actionName = "update-profile", actionType = "UPDATE",
+        templates = {"profile_updated"})
+public void updateProfile(UpdateProfileRequest request) { ... }
+```
+
+That's it - every invocation of an `@Audit`-annotated method now produces one `audit_log` row
+(`outcome`, `duration_ms`, actor/client fields, and any rendered `templates`), dispatched
+asynchronously and deferred until the caller's transaction commits by default. See the
+[full usage guide](audit_log/audit-log-spring-boot-autoconfigure/README.md) for actor resolution,
+delivery-mode control, reading records back, retention, and the optional REST server for non-JVM
+callers.
 
 ## Build
 
