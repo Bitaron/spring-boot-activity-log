@@ -126,6 +126,8 @@ running).
 | `audit.log.retention.max-age` | - (required if enabled) | Records older than this become eligible for deletion. |
 | `audit.log.retention.cron` | `0 0 3 * * *` | Cron schedule (six-field, seconds first) the purge job runs on. |
 | `audit.log.retention.batch-size` | `1000` | Rows deleted per batch iteration. |
+| `audit.log.multi-tenancy.enabled` | `false` | Master switch for tenant tagging/scoping - see "Multi-tenancy" below. |
+| `audit.log.headers.tenant-id` | `X-TENANT-ID` | Header the default `AuditTenantResolver` reads from, when `multi-tenancy.enabled=true`. |
 
 All numeric properties are validated (`@Min`) when a JSR-303 provider (e.g.
 `spring-boot-starter-validation`) is on your application's classpath; without one, invalid values
@@ -202,12 +204,54 @@ server module below - use `AuditLogRecorder` directly:
 auditLogRecorder.record(new AuditEventRequest(
         "PAYMENT", "capture", "UPDATE", "", List.of("payment_captured"),
         actorId, actorName, clientIp, clientLocation, userAgent,
-        args, result, exception, exceptionThrown, durationMillis, traceId));
+        args, result, exception, exceptionThrown, durationMillis, traceId, tenantId));
 ```
 
 It follows the same delivery pipeline (mode, commit-aware dispatch, metrics, failure isolation) as
 the `@Audit` path - this is an alternate way to get an event *in*, not a different way it's
 written afterward.
+
+## Multi-tenancy
+
+Off by default (`audit.log.multi-tenancy.enabled=false`) - with no flag flip, upgrading to this
+version changes nothing: `tenant_id` stays `null` on every row and no read is ever tenant-filtered,
+exactly like before this feature existed.
+
+Turn it on and every audit record is tagged with a tenant, resolved by `AuditTenantResolver` -
+consulted unconditionally on every `@Audit` invocation (tenant identity is orthogonal to actor
+identity: a `SYSTEM`-actor scheduled job still runs on behalf of one tenant) and on every read
+through `AuditLogQueryService`:
+
+```properties
+audit.log.multi-tenancy.enabled=true
+audit.log.headers.tenant-id=X-TENANT-ID
+```
+
+With no `AuditTenantResolver` bean of your own, the default reads the configured header (see
+"Trust model" below - same spoofability caveat as the actor-header defaults). For a verified tenant
+identity, supply your own bean instead, e.g. backed by a claim on the authenticated principal:
+
+```java
+@Bean
+AuditTenantResolver auditTenantResolver() {
+    return () -> SecurityContextHolder.getContext().getAuthentication() /* ... */;
+}
+```
+
+**Reads are scoped automatically, not by an `AuditQuery` field** - `AuditQuery` has no `tenantId`
+parameter to remember to pass. Once enabled, `AuditLogQueryService.find`/`findAfter` resolve the
+current tenant themselves and unconditionally scope every query to it, **failing closed**
+(`IllegalStateException`) if none resolves, rather than ever running an unscoped, all-tenants
+query. This is what makes it structurally hard for a future read to accidentally leak across
+tenants - there is no per-call filter to forget.
+
+`AuditTemplate`/`AuditGroup` are deliberately **not** tenant-scoped: templates are code-like,
+versioned with your application, not tenant data; the sensitive rows under a group are already
+tenant-tagged via `audit_log.tenant_id`. The REST server module's `POST /audit-log/events` accepts
+an explicit `tenant_id` on the wire (see its own README) - `GET /audit-log/records` does not accept
+one as a query parameter, relying on the same ambient `AuditTenantResolver` scoping described
+above, since a caller-suppliable tenant filter under that module's single-shared-API-key auth model
+would let any caller read any other tenant's data by changing a query parameter.
 
 ## Server mode and other-language clients
 
@@ -228,6 +272,8 @@ callers can use `audit-log-java-client`; any other language can generate a clien
 - **`AuditLogArgumentSerializer`** - swap out the default Jackson-based serializer.
 - **`AuditLogLocationResolver`** - plug in IP geolocation (e.g. MaxMind GeoIP2); none is bundled.
 - **`AuditTemplateSource`** - add another place templates can come from.
+- **`AuditTenantResolver`** - supply your own tenant resolution for multi-tenancy - see
+  "Multi-tenancy" above.
 
 ## Trust model
 
@@ -238,7 +284,9 @@ client IP is similarly only read from `X-Forwarded-For`-style headers when
 `audit.log.trust-forwarded-headers=true` is explicitly set, since those headers are equally
 spoofable without a trusted proxy in front. For a verified actor identity, supply an
 `AuditLogGenericDataGetter` backed by your real authentication mechanism, or rely on the
-Spring-Security-backed default described above.
+Spring-Security-backed default described above. The default `AuditTenantResolver` (see
+"Multi-tenancy" above) carries the identical caveat for the `X-TENANT-ID` header when
+`audit.log.multi-tenancy.enabled=true`.
 
 FreeMarker templates are executed against the invocation's context. The resolver disables the
 `?api` built-in and uses `SAFER_RESOLVER` to block reflective escapes into arbitrary classes, but

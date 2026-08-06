@@ -78,7 +78,7 @@ class AuditLogWriterTest {
             seedTemplate(context, "greeting", "Hello ${actorName}!");
             seedTemplate(context, "farewell", "Bye ${actorName}!");
             AuditContext context42ms = new AuditContext(
-                    "actor-1", "Ada", null, null, null, null, null, null, false, 42, null);
+                    "actor-1", "Ada", null, null, null, null, null, null, false, 42, null, null);
             persistSynchronously(context, "twoTemplates", context42ms);
 
             List<AuditLog> rows = findAll(context);
@@ -256,7 +256,7 @@ class AuditLogWriterTest {
     }
 
     private AuditContext clientData(String actorId, String actorName, Object args) {
-        return new AuditContext(actorId, actorName, null, null, null, args, null, null, false, 0, null);
+        return new AuditContext(actorId, actorName, null, null, null, args, null, null, false, 0, null, null);
     }
 
     /** Retrieves a real {@code @Audit} instance off a fixture method, avoiding hand-rolled annotation proxies. */

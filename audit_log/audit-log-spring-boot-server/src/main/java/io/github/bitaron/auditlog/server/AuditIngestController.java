@@ -23,19 +23,28 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuditIngestController {
 
     private final AuditLogRecorder auditLogRecorder;
+    private final boolean multiTenancyRequired;
 
-    public AuditIngestController(AuditLogRecorder auditLogRecorder) {
+    public AuditIngestController(AuditLogRecorder auditLogRecorder, AuditLogServerProperties serverProperties) {
         this.auditLogRecorder = auditLogRecorder;
+        this.multiTenancyRequired = serverProperties.getMultiTenancy().isRequired();
     }
 
     /**
      * Returns {@code 202 Accepted} once the event has been handed to {@link AuditLogRecorder} -
      * the write itself still follows the configured delivery mode ({@code audit.log.mode}), so
      * {@code 202} means "accepted for processing", not "durably committed".
+     *
+     * @throws IllegalArgumentException (400, via {@link AuditServerExceptionHandler}) if
+     * {@code audit.log.server.multi-tenancy.required=true} and {@code tenant_id} is blank
      */
     @PostMapping
     public ResponseEntity<AuditEventResponse> ingest(
             @RequestBody io.github.bitaron.auditlog.server.proto.v1.AuditEventRequest request) {
+        if (multiTenancyRequired && request.getTenantId().isBlank()) {
+            throw new IllegalArgumentException(
+                    "tenant_id is required when audit.log.server.multi-tenancy.required=true");
+        }
         auditLogRecorder.record(ProtoMapper.toEventRequest(request));
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(ProtoMapper.toEventResponse(true));
     }

@@ -35,4 +35,31 @@ public class AuditLogServerProperties {
      * module's README.
      */
     private String apiKey;
+
+    /**
+     * See {@link MultiTenancy}. Not {@code @Valid}-cascaded like the core starter's nested
+     * property groups - unlike {@code AuditLogProperties}, this module has no
+     * {@code jakarta.validation-api} on its compile classpath at all (nothing here has ever
+     * needed JSR-303 constraints), and this nested class has none either.
+     */
+    private final MultiTenancy multiTenancy = new MultiTenancy();
+
+    /**
+     * Server-module-local tenant-tagging enforcement for {@code POST /audit-log/events} -
+     * independent of the core starter's {@code audit.log.multi-tenancy.enabled} (a deployment
+     * could run reads in enforced multi-tenant mode while still accepting untagged legacy ingest
+     * traffic during a migration window, or vice versa) - though leaving this off while the core
+     * flag is on means untagged ingests fall back to the "null = default tenant" convention, which
+     * is usually not what's wanted; keep the two in lockstep operationally.
+     */
+    @Getter
+    @Setter
+    public static class MultiTenancy {
+        /**
+         * When {@code true}, {@code POST /audit-log/events} rejects (400) any request whose
+         * {@code tenant_id} is blank. Off by default - matches the core starter's tenant fields
+         * being optional everywhere else.
+         */
+        private boolean required = false;
+    }
 }

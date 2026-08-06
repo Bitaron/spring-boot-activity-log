@@ -7,6 +7,7 @@ import io.github.bitaron.auditlog.contract.AuditLogRecorder;
 import io.github.bitaron.auditlog.contract.AuditLogTemplateResolver;
 import io.github.bitaron.auditlog.contract.AuditMetricsRecorder;
 import io.github.bitaron.auditlog.contract.AuditTemplateSource;
+import io.github.bitaron.auditlog.contract.AuditTenantResolver;
 import io.github.bitaron.auditlog.core.AuditContextResolver;
 import io.github.bitaron.auditlog.core.AuditLogAspect;
 import io.github.bitaron.auditlog.core.AuditLogTaskExecutor;
@@ -18,6 +19,7 @@ import io.github.bitaron.auditlog.core.AuditTemplateValidator;
 import io.github.bitaron.auditlog.core.DatabaseAuditTemplateSource;
 import io.github.bitaron.auditlog.core.DefaultAuditContextResolver;
 import io.github.bitaron.auditlog.core.DefaultAuditLogRecorder;
+import io.github.bitaron.auditlog.core.DefaultAuditTenantResolver;
 import io.github.bitaron.auditlog.core.FreemarkerTemplateResolver;
 import io.github.bitaron.auditlog.core.JacksonAuditLogArgumentSerializer;
 import io.github.bitaron.auditlog.core.NoOpAuditMetricsRecorder;
@@ -165,15 +167,30 @@ public class AuditLogAutoConfiguration {
         return new AuditLogger(auditLogWriter, auditLogTaskExecutor, auditMetricsRecorder, auditLogProperties.getMode());
     }
 
+    /**
+     * Only registered when {@code audit.log.multi-tenancy.enabled=true} - see
+     * {@link AuditLogProperties.MultiTenancy}. With no bean registered,
+     * {@link #auditContextResolver} and {@link #auditLogQueryService} both receive {@code null}/
+     * {@code false} and behave exactly as they did before this feature existed.
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "audit.log.multi-tenancy", name = "enabled", havingValue = "true")
+    public AuditTenantResolver auditTenantResolver(AuditLogProperties auditLogProperties) {
+        return new DefaultAuditTenantResolver(auditLogProperties.getHeaders().getTenantId());
+    }
+
     @Bean
     @ConditionalOnMissingBean
     public AuditContextResolver auditContextResolver(AuditLogProperties auditLogProperties,
                                                        ObjectProvider<AuditLogGenericDataGetter> auditLogGenericDataGetter,
-                                                       ObjectProvider<AuditLogLocationResolver> auditLogLocationResolver) {
+                                                       ObjectProvider<AuditLogLocationResolver> auditLogLocationResolver,
+                                                       ObjectProvider<AuditTenantResolver> auditTenantResolver) {
         return new DefaultAuditContextResolver(
                 auditLogGenericDataGetter.getIfAvailable(),
                 auditLogProperties,
-                auditLogLocationResolver.getIfAvailable());
+                auditLogLocationResolver.getIfAvailable(),
+                auditTenantResolver.getIfAvailable());
     }
 
     @Bean
@@ -196,9 +213,11 @@ public class AuditLogAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public AuditLogQueryService auditLogQueryService(EntityManagerFactory entityManagerFactory,
-                                                       AuditLogProperties auditLogProperties) {
+                                                       AuditLogProperties auditLogProperties,
+                                                       ObjectProvider<AuditTenantResolver> auditTenantResolver) {
         return new JpaAuditLogQueryService(
-                sharedEntityManager(entityManagerFactory), auditLogProperties.getQuery().getMaxPageSize());
+                sharedEntityManager(entityManagerFactory), auditLogProperties.getQuery().getMaxPageSize(),
+                auditTenantResolver.getIfAvailable(), auditLogProperties.getMultiTenancy().isEnabled());
     }
 
     @Bean

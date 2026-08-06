@@ -42,7 +42,8 @@ final class ProtoMapper {
                 emptyToNull(proto.getExceptionJson()),
                 proto.getExceptionThrown(),
                 proto.getDurationMillis(),
-                emptyToNull(proto.getTraceId()));
+                emptyToNull(proto.getTraceId()),
+                emptyToNull(proto.getTenantId()));
     }
 
     static AuditEventResponse toEventResponse(boolean accepted) {
@@ -65,6 +66,7 @@ final class ProtoMapper {
         setIfNotNull(record.actionName(), builder::setActionName);
         setIfNotNull(record.traceId(), builder::setTraceId);
         setIfNotNull(record.data(), builder::setData);
+        setIfNotNull(record.tenantId(), builder::setTenantId);
         if (record.createdAt() != null) {
             builder.setCreatedAt(record.createdAt().toString());
         }

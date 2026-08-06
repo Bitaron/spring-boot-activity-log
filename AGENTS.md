@@ -31,6 +31,7 @@ docs/
   SCALING.md                                    large-data operation: pagination, retention, partitioning
   CLIENT_CODEGEN.md                              generating a client for the REST server, any language
 db/migration/V2__audit_log_v2.sql               1.x -> 2.x schema migration (PostgreSQL dialect)
+db/migration/V3__audit_log_multi_tenancy.sql    adds the nullable, opt-in-enforced tenant_id column
 ```
 
 Dependency direction: `starter` -> `autoconfigure`. `server` -> `starter` (not `autoconfigure`
@@ -47,7 +48,7 @@ dependency that points the other way.
 | `annotation` | `Audit`, `ActorSource`, `AuditDeliveryMode`, `Audits`, `AuditIgnore` | The user-facing annotation and its attribute types |
 | `autoconfigure` | `AuditLogAutoConfiguration` | Everything is wired here; every `@Bean` is `@ConditionalOnMissingBean` |
 | | `AuditLogEntityScanRegistrar` | Adds this starter's entities to the host's entity scan *additively* |
-| `contract` | `AuditTemplateSource`, `AuditLogTemplateResolver`, `AuditLogArgumentSerializer`, `AuditLogGenericDataGetter`, `AuditLogLocationResolver`, `AuditMetricsRecorder`, `AuditLogRecorder` | SPIs a consumer can implement to override defaults |
+| `contract` | `AuditTemplateSource`, `AuditLogTemplateResolver`, `AuditLogArgumentSerializer`, `AuditLogGenericDataGetter`, `AuditLogLocationResolver`, `AuditMetricsRecorder`, `AuditLogRecorder`, `AuditTenantResolver` | SPIs a consumer can implement to override defaults |
 | `core` | `AuditLogAspect` | Single `@Around` advice, `@Order(LOWEST_PRECEDENCE - 1)` |
 | | `AuditContextResolver` / `DefaultAuditContextResolver` | The **only** place that reads ambient request state |
 | | `AuditLogger` | Delivery-mode dispatch (sync/async, per-call and global) |
@@ -57,10 +58,11 @@ dependency that points the other way.
 | | `AuditLogRetentionService` | Opt-in scheduled/batched purge |
 | | `DefaultAuditLogRecorder` | Non-AOP write path |
 | | `FreemarkerTemplateResolver`, `JacksonAuditLogArgumentSerializer` | Default template/serialization implementations |
+| | `DefaultAuditTenantResolver` | Header-based default tenant resolution, opt-in (see "Conventions" #14) |
 | `model` | `AuditContext`, `AuditEventRequest` | Immutable data carriers through the write pipeline |
 | `entity` | `AuditLog`, `AuditLogMessage`, `AuditOutcome`, `AuditTemplate`, `AuditGroup` | JPA entities - not the public read API, see `query` |
 | `query` | `AuditLogQueryService` / `JpaAuditLogQueryService`, `AuditQuery`, `AuditRecord`, `AuditCursor` | The supported read API |
-| `properties` | `AuditLogProperties` | `@ConfigurationProperties("audit.log")`, nested `Headers`/`Executor`/`SchemaValidation`/`Query`/`Retention` |
+| `properties` | `AuditLogProperties` | `@ConfigurationProperties("audit.log")`, nested `Headers`/`Executor`/`SchemaValidation`/`Query`/`Retention`/`MultiTenancy` |
 
 ### Server/client (`audit-log-server-proto`, `audit-log-spring-boot-server`, `audit-log-java-client`)
 
@@ -130,8 +132,11 @@ on first build - needs outbound access to Maven Central or a mirror.
 | `audit.log.retention.max-age` | *(required if enabled)* | Records older than this are eligible for deletion |
 | `audit.log.retention.cron` | `0 0 3 * * *` | Purge job schedule |
 | `audit.log.retention.batch-size` | `1000` | Rows deleted per batch iteration |
+| `audit.log.multi-tenancy.enabled` | `false` | Master switch for tenant tagging/scoping - see "Conventions" #14 |
+| `audit.log.headers.tenant-id` | `X-TENANT-ID` | Header the default `AuditTenantResolver` reads from |
 | `audit.log.server.enabled` | `false` | Master switch for the REST server module |
 | `audit.log.server.api-key` | *(required if enabled)* | Shared secret required via `X-API-Key` |
+| `audit.log.server.multi-tenancy.required` | `false` | Reject (`400`) ingest requests with a blank `tenant_id` |
 
 Full property javadoc lives on `AuditLogProperties`/`AuditLogServerProperties` themselves - this
 table is for discovery, not the last word on behavior.
@@ -190,6 +195,15 @@ here for fast lookup.
     `com.google.protobuf.util.JsonFormat`) on the classpath - a runtime classpath probe, not a
     declared dependency of the converter class. Without it, JSON requests to the server module
     silently get `415`, not an error naming what's missing. Also caught empirically.
+14. **`AuditTenantResolver` is its own SPI, not a method on `AuditLogGenericDataGetter`,** and
+    `JpaAuditLogQueryService` enforces tenant scoping internally rather than accepting a
+    caller-suppliable `tenantId` on `AuditQuery`. Tenant identity is orthogonal to actor identity
+    (a `SYSTEM`-actor scheduled job still runs on behalf of one tenant), so it's resolved
+    unconditionally, not nested in `DefaultAuditContextResolver`'s `actorSource` switch. And a
+    caller-suppliable read-side filter would be exactly the field a future caller forgets to pass -
+    putting the mandatory predicate inside the query service itself, resolved fresh per call and
+    failing closed when unresolvable, is what makes cross-tenant leakage structurally hard rather
+    than merely discouraged.
 
 ## Testing patterns
 

@@ -63,7 +63,7 @@ class AuditLogRecorderTest {
             AuditLogRecorder recorder = context.getBean(AuditLogRecorder.class);
             recorder.record(new AuditEventRequest(
                     "greeting-event", "greet", "", "", List.of("greeting"),
-                    null, "Ada", null, null, null, null, null, null, false, 0, null));
+                    null, "Ada", null, null, null, null, null, null, false, 0, null, null));
             Awaitility.await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
                     assertThat(findAllLogs(context)).hasSize(2));
 

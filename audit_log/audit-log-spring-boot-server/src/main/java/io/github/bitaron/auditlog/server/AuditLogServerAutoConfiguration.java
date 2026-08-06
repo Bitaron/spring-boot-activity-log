@@ -41,8 +41,9 @@ public class AuditLogServerAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public AuditIngestController auditIngestController(AuditLogRecorder auditLogRecorder) {
-        return new AuditIngestController(auditLogRecorder);
+    public AuditIngestController auditIngestController(AuditLogRecorder auditLogRecorder,
+                                                         AuditLogServerProperties auditLogServerProperties) {
+        return new AuditIngestController(auditLogRecorder, auditLogServerProperties);
     }
 
     @Bean

@@ -114,6 +114,7 @@ public class AuditLogWriter {
         auditLog.setOutcome(auditContext.exceptionThrown() ? AuditOutcome.FAILURE : AuditOutcome.SUCCESS);
         auditLog.setDurationMs(auditContext.durationMillis());
         auditLog.setTraceId(auditContext.traceId());
+        auditLog.setTenantId(auditContext.tenantId());
         auditLog.setData(serializeData(auditContext));
         auditLog.setGroupId(resolveGroupId(audit));
         return auditLog;

@@ -127,6 +127,10 @@ public class AuditLogProperties {
     @Valid
     private final Retention retention = new Retention();
 
+    /** Opt-in tenant tagging/scoping - off by default; see {@link MultiTenancy}. */
+    @Valid
+    private final MultiTenancy multiTenancy = new MultiTenancy();
+
     public enum DeliveryMode {
         ASYNC, SYNC
     }
@@ -143,6 +147,10 @@ public class AuditLogProperties {
         private String requesterId = "X-USER-ID";
         @NotNull
         private String requesterName = "X-USER-NAME";
+
+        /** Header {@link io.github.bitaron.auditlog.core.DefaultAuditTenantResolver} reads from. */
+        @NotNull
+        private String tenantId = "X-TENANT-ID";
     }
 
     /** See {@link #schemaValidation}. */
@@ -219,5 +227,22 @@ public class AuditLogProperties {
          */
         @Min(1)
         private int batchSize = 1000;
+    }
+
+    /** See {@link #multiTenancy}. */
+    @Getter
+    @Setter
+    public static class MultiTenancy {
+        /**
+         * Master switch for tenant tagging/scoping - see
+         * {@code io.github.bitaron.auditlog.contract.AuditTenantResolver}. Off by default: with
+         * no flag flip, an upgrade to this version changes nothing - {@code tenant_id} stays
+         * {@code null} on every row and reads are never tenant-filtered, exactly like today.
+         * When {@code true}, a {@code AuditTenantResolver} bean is registered (the header-based
+         * {@code DefaultAuditTenantResolver} unless overridden) and every read through
+         * {@code AuditLogQueryService} is scoped to whatever tenant it resolves, failing closed
+         * (throwing) if it resolves to none - see {@code JpaAuditLogQueryService}.
+         */
+        private boolean enabled = false;
     }
 }

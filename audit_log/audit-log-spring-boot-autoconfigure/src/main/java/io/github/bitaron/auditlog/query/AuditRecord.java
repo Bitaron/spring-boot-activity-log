@@ -27,6 +27,7 @@ public record AuditRecord(
         Long durationMs,
         String traceId,
         String data,
-        Long groupId
+        Long groupId,
+        String tenantId
 ) {
 }

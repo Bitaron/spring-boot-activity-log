@@ -45,6 +45,11 @@ message AuditEventRequest {
   bool exception_thrown = 14;
   int64 duration_millis = 15;
   string trace_id = 16;
+  // Caller-supplied, like actor_id - same trust level as this endpoint's shared-API-key auth
+  // model (see ApiKeyAuthFilter). Only enforced (400 if blank) when the server is configured with
+  // audit.log.server.multi-tenancy.required=true; otherwise optional, same as every other field
+  // here.
+  string tenant_id = 17;
 }
 
 // POST /audit-log/events response. The write itself follows the configured delivery mode
@@ -78,10 +83,17 @@ message AuditRecordProto {
   string trace_id = 13;
   string data = 14;
   int64 group_id = 15;
+  string tenant_id = 16;
 }
 
 // GET /audit-log/records query parameters, mapped by the controller - not sent as a message body,
 // but grouped here as the typed shape of the accepted query parameters for client codegen.
+//
+// Deliberately has no tenant_id field: under this server's single-shared-API-key auth model, a
+// caller-suppliable tenant filter on reads would let any holder of that one key request any other
+// tenant's data by changing a query parameter. Reads are instead scoped server-side, ambiently, by
+// whatever AuditTenantResolver is active for the request (see JpaAuditLogQueryService) - not by
+// anything the client sends here.
 message AuditQueryRequest {
   string actor_id = 1;
   string audit_type = 2;

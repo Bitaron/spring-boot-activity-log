@@ -9,17 +9,24 @@ itself.
 
 ## TL;DR
 
-Two passes are **complete**, not merged to `main` yet as of this commit (branch was restarted from
-`main` after the v2 pass merged, per the task's branch-reuse rule):
+Three passes are **complete**:
 
 - **v2** (WP0-WP7): the architecture/API redesign - package rename, annotation redesign, commit-
   aware dispatch, data model fix, typed config, read API. See the "v2" sections below.
-- **v3** (WP8-WP14, this pass): per-call delivery override, startup schema validation, large-data
+- **v3** (WP8-WP14): per-call delivery override, startup schema validation, large-data
   handling (pagination/retention/partitioning docs), a programmatic write facade, an optional
   Protobuf REST server, and client codegen support.
+- **WP15 (this pass): opt-in multi-tenancy.** New `AuditTenantResolver` SPI (its own interface,
+  not folded into `AuditLogGenericDataGetter` - tenant identity is orthogonal to actor identity);
+  a nullable `audit_log.tenant_id` column (`V3__audit_log_multi_tenancy.sql`); mandatory,
+  fail-closed tenant scoping built into `JpaAuditLogQueryService` itself (not a caller-suppliable
+  `AuditQuery` field) once `audit.log.multi-tenancy.enabled=true`; `tenant_id` threaded through the
+  server module's ingest wire format and `AuditIngestController`'s
+  `audit.log.server.multi-tenancy.required` enforcement. Off by default - zero behavior change on
+  upgrade. See "Decisions" #14 and `MIGRATION.md`'s "Multi-tenancy" row for the full shape.
 
-`mvn clean install` is green across all **7 modules**: 69 tests total. There is no in-flight work
-and no known broken state.
+`mvn clean install` must stay green across all 7 modules - see "How to verify" below for the exact
+commands; module/test counts aren't repeated here to avoid drifting stale as WPs are added.
 
 ## How to verify you're in a good state
 
@@ -80,6 +87,7 @@ client modules use `io.github.bitaron.auditlog.server` / `.client` / `.server.pr
 | | `AuditLogLocationResolver` | SPI: IP -> geographic location (none bundled) |
 | | `AuditMetricsRecorder` | SPI: delivery-outcome counters |
 | | **`AuditLogRecorder`** | **(v3/WP12)** Programmatic write facade - record an event with no `@Audit` join point |
+| | **`AuditTenantResolver`** | **(WP15)** SPI: resolves the current tenant, for both write-time tagging and read-time scoping |
 | `core` | `AuditLogAspect` | Single `@Around` advice, `@Order(LOWEST_PRECEDENCE - 1)`. **(v3)** pointcut now matches both `@Audit` and the synthetic `@Audits` container; resolves every declared instance via `AnnotatedElementUtils.findMergedRepeatableAnnotations` instead of binding one |
 | | `AuditContextResolver` / `DefaultAuditContextResolver` | The **only** place that reads ambient request state |
 | | `AuditLogger` | Delivery-mode dispatch: SYNC direct, ASYNC deferred to `afterCommit` when a tx is active. **(v3)** `effectiveMode()` resolves `Audit#mode()` against the global default first |
@@ -91,15 +99,16 @@ client modules use `io.github.bitaron.auditlog.server` / `.client` / `.server.pr
 | | **`DefaultAuditLogRecorder`** | **(v3/WP12)** Builds `AuditContext` directly + synthesizes an `Audit` annotation via `AnnotationUtils.synthesizeAnnotation` to reuse `AuditLogWriter`/`AuditLogger` unchanged |
 | | `FreemarkerTemplateResolver` | Default renderer; LRU-bounded compiled-template cache, `?api` disabled, `SAFER_RESOLVER` |
 | | `JacksonAuditLogArgumentSerializer` | Default serializer; placeholders, masking, valid-JSON truncation |
-| `model` | `AuditContext` | Immutable record passed through the whole pipeline |
-| | **`AuditEventRequest`** | **(v3/WP12)** Immutable record for `AuditLogRecorder#record` - the non-AOP write path's input |
-| `entity` | `AuditLog` | One row per invocation. `@Immutable`, id-based equals/hashCode |
+| | **`DefaultAuditTenantResolver`** | **(WP15)** Header-based default (`audit.log.headers.tenant-id`), only registered when multi-tenancy is enabled |
+| `model` | `AuditContext` | Immutable record passed through the whole pipeline. **(WP15)** trailing `tenantId` field |
+| | **`AuditEventRequest`** | **(v3/WP12)** Immutable record for `AuditLogRecorder#record` - the non-AOP write path's input. **(WP15)** trailing `tenantId` field |
+| `entity` | `AuditLog` | One row per invocation. `@Immutable`, id-based equals/hashCode. **(WP15)** nullable `tenantId`/`tenant_id` |
 | | `AuditLogMessage` | Child rows: one per rendered template, keyed by `templateName` |
 | | `AuditOutcome` | `SUCCESS` / `FAILURE` |
-| `query` | `AuditLogQueryService` / `JpaAuditLogQueryService` | The supported read API. **(v3)** page-size cap, sort whitelist, `findAfter` keyset pagination |
-| | `AuditQuery` / `AuditRecord` | Filter + immutable projection |
+| `query` | `AuditLogQueryService` / `JpaAuditLogQueryService` | The supported read API. **(v3)** page-size cap, sort whitelist, `findAfter` keyset pagination. **(WP15)** mandatory, fail-closed tenant predicate prepended internally when multi-tenancy is enabled - not an `AuditQuery` field |
+| | `AuditQuery` / `AuditRecord` | Filter + immutable projection. **(WP15)** `AuditRecord` gains a trailing `tenantId`; `AuditQuery` deliberately unchanged (see above) |
 | | **`AuditCursor`** | **(v3/WP11)** `(createdAt, id)` position for `findAfter` |
-| `properties` | `AuditLogProperties` | `@Validated @ConfigurationProperties("audit.log")`. Nested: `Headers`, `Executor`, **`SchemaValidation`, `Query`, `Retention`** (v3) |
+| `properties` | `AuditLogProperties` | `@Validated @ConfigurationProperties("audit.log")`. Nested: `Headers` (**WP15**: `tenantId`), `Executor`, `SchemaValidation`, `Query`, `Retention` (v3), **`MultiTenancy`** (WP15) |
 
 ### Server/client modules (v3/WP13-14)
 
@@ -110,8 +119,9 @@ client modules use `io.github.bitaron.auditlog.server` / `.client` / `.server.pr
 | | | `AuditIngestController` | `POST /audit-log/events` -> `AuditLogRecorder` |
 | | | `AuditQueryController` | `GET /audit-log/records` -> `AuditLogQueryService` |
 | | | `ApiKeyAuthFilter` | Requires `X-API-Key` matching `audit.log.server.api-key` on every `/audit-log/*` request |
-| | | `AuditServerExceptionHandler` | Maps `IllegalArgumentException` -> `400` |
-| | | `ProtoMapper` | Wire<->domain type mapping, kept in one place |
+| | | `AuditServerExceptionHandler` | Maps `IllegalArgumentException`/`IllegalStateException` -> `400` |
+| | | `ProtoMapper` | Wire<->domain type mapping, kept in one place. **(WP15)** maps `tenant_id` both directions |
+| | | `AuditLogServerProperties` | **(WP15)** nested `MultiTenancy.required` - reject ingest with a blank `tenant_id` |
 | `audit-log-java-client` | `client` | `AuditLogHttpClient` | Thin `RestClient` wrapper; the module a Java consumer of server mode depends on |
 
 ## Decisions that are load-bearing - do not "simplify" these
@@ -190,6 +200,17 @@ one back will reintroduce a real bug. **1-6 are from the v2 pass; 7-13 are new i
     module silently get `415`, not an error naming what's missing. **Also verified empirically** -
     caught the same way as #12, via a failing `AuditLogServerIntegrationTest` run before the fix.
 
+14. **`AuditTenantResolver` is its own SPI (WP15), not a method on `AuditLogGenericDataGetter`,
+    and `JpaAuditLogQueryService` enforces tenant scoping internally rather than accepting a
+    caller-suppliable `tenantId` on `AuditQuery`.** Tenant identity is orthogonal to actor
+    identity - a `SYSTEM`-actor scheduled job still runs on behalf of one tenant - so it's resolved
+    unconditionally in `DefaultAuditContextResolver`, not nested in the `actorSource` switch.
+    Putting the mandatory predicate inside the query service itself (resolved fresh per call,
+    failing closed when unresolvable) rather than on `AuditQuery` is what makes cross-tenant
+    leakage structurally hard: there is no per-call filter for a future caller to forget to pass.
+    The REST server's `AuditQueryRequest` proto deliberately has no caller-suppliable `tenant_id`
+    for the same reason, one level up - see `audit_event.proto`'s comment on that message.
+
 ## Test inventory (what's actually guarded)
 
 ### v2 (unchanged)
@@ -218,6 +239,15 @@ one back will reintroduce a real bug. **1-6 are from the v2 pass; 7-13 are new i
 | `AuditLogServerIntegrationTest` | **WP13**: real `MockMvc` round-trip through both JSON and binary-`application/x-protobuf` ingest, `401` without the API key, query returns the ingested row |
 | `AuditLogHttpClientTest` | **WP14**: starts the real server module at a random port; one `ingest` + one `query` call round-trips through the generated Protobuf types with zero manual (de)serialization in the test |
 
+### WP15 (this pass)
+
+| Test | Guards |
+|---|---|
+| `AuditLogAutoConfigurationTest` | No `AuditTenantResolver` bean by default; `DefaultAuditTenantResolver` registered when `audit.log.multi-tenancy.enabled=true`; a user-supplied bean overrides it |
+| `JpaAuditLogQueryServiceTest` | Disabled-by-default: rows across all tenants still returned unfiltered; enabled: reads are scoped to only the resolved tenant, via both `find` and `findAfter`; an unresolvable tenant fails closed (`IllegalStateException`), never falling back to an unscoped query |
+| `AuditLogServerIntegrationTest` | `tenant_id` round-trips through ingest with the server-local `multi-tenancy.required` flag left off |
+| `AuditLogServerMultiTenancyIntegrationTest` | `multi-tenancy.required=true` rejects a blank `tenant_id` on ingest (`400`); a real HTTP round trip proves two tenants' ingested rows stay isolated under `GET /audit-log/records`, scoped by the `X-TENANT-ID` header; a missing header is rejected the same way as the unit-level fail-closed case |
+
 ## Not done (deliberately)
 
 ### From the v2 pass's "out of scope"
@@ -233,8 +263,9 @@ one back will reintroduce a real bug. **1-6 are from the v2 pass; 7-13 are new i
 - **Export & right-to-erasure (CSV export, actor-scoped purge).** Explicitly excluded per user
   instruction for this round - not designed at all, not even stubbed. If it comes back,
   `AuditLogRetentionService`'s batched-delete mechanics are the natural thing to extend.
-- **Multi-tenancy, alerting/webhooks, pluggable non-JPA storage.** Each is a separate, larger
-  design decision than this pass's scope.
+- **Multi-tenancy.** Implemented in WP15 (see below) - no longer deferred.
+- **Alerting/webhooks, pluggable non-JPA storage.** Each is a separate, larger design decision than
+  any pass's scope so far.
 - **A runtime `audit.log.id-generation=IDENTITY|SEQUENCE` property**, despite being mentioned in
   the original plan text for WP11. Deliberately **not implemented** after closer analysis: JPA's
   `@GeneratedValue` strategy is effectively fixed at entity-mapping time, and a property that
@@ -252,6 +283,26 @@ one back will reintroduce a real bug. **1-6 are from the v2 pass; 7-13 are new i
   packages to PyPI/npm/etc. is a packaging decision, not attempted.
 - **Build-time (Maven-plugin) DB schema check.** Only the startup check (`AuditSchemaValidator`,
   WP10) exists; a build-time variant needs its own design (CI credentials, which phase to bind to).
+
+### From WP15's out of scope (multi-tenancy)
+
+- **Per-tenant server authentication/authorization.** WP15 threads tenant data through and enforces
+  it at the DB query level, but the server module's `ApiKeyAuthFilter` is still a single shared
+  secret with no per-caller identity - proving a given API caller is actually allowed to act
+  as/read a given tenant still rests entirely on whatever sets `X-TENANT-ID` (trusted only if a
+  gateway sets it, same as today's actor-header trust model). Real per-tenant access control needs
+  per-tenant API keys or JWT/claims-based auth - a materially bigger change, not attempted here.
+- **`AuditTemplate`/`AuditGroup` staying global (not tenant-scoped).** Templates are code-like,
+  versioned with the application, not tenant data; the sensitive rows under a group are already
+  tenant-tagged via `audit_log.tenant_id`. Per-tenant custom templates or group namespacing would
+  need composite unique constraints and a tenant parameter threaded through `AuditTemplateSource`
+  implementations - not designed here; flag explicitly if it's actually needed.
+- **`AuditLogMessage` gains no `tenant_id`.** It's always looked up via `audit_log_id` from an
+  already tenant-scoped `AuditLog` row (`JpaAuditLogQueryService` never queries it independently),
+  so a tenant column there would be pure redundant denormalization today - revisit only if that
+  access pattern changes.
+- **Automatic per-tenant retention/purge scoping.** `AuditLogRetentionService`'s batched delete
+  still purges by age alone, across all tenants uniformly - not tenant-aware.
 
 ## Known constraints and limitations
 

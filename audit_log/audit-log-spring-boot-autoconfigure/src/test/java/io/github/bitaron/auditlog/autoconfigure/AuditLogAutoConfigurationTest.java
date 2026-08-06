@@ -4,6 +4,8 @@ import io.github.bitaron.auditlog.annotation.Audit;
 import io.github.bitaron.auditlog.contract.AuditLogArgumentSerializer;
 import io.github.bitaron.auditlog.contract.AuditLogGenericDataGetter;
 import io.github.bitaron.auditlog.contract.AuditLogTemplateResolver;
+import io.github.bitaron.auditlog.contract.AuditTenantResolver;
+import io.github.bitaron.auditlog.core.DefaultAuditTenantResolver;
 import io.github.bitaron.auditlog.core.AuditLogAspect;
 import io.github.bitaron.auditlog.core.AuditLogWriter;
 import io.github.bitaron.auditlog.core.AuditLogger;
@@ -177,7 +179,7 @@ class AuditLogAutoConfigurationTest {
             AuditLogWriter writer = context.getBean(AuditLogWriter.class);
             PlatformTransactionManager transactionManager = context.getBean(PlatformTransactionManager.class);
             AuditContext auditContext = new AuditContext(
-                    "actor-1", "Ada", null, null, null, null, null, null, false, 0, null);
+                    "actor-1", "Ada", null, null, null, null, null, null, false, 0, null, null);
 
             new TransactionTemplate(transactionManager).executeWithoutResult(status ->
                     writer.persistRequiresNew(fixtureAudit(), auditContext));
@@ -230,9 +232,9 @@ class AuditLogAutoConfigurationTest {
             PlatformTransactionManager transactionManager = context.getBean(PlatformTransactionManager.class);
             new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
                 writer.persistRequiresNew(fixtureAuditNoTemplates(), new AuditContext(
-                        "actor-1", "Ada", null, null, null, null, null, null, false, 0, null));
+                        "actor-1", "Ada", null, null, null, null, null, null, false, 0, null, null));
                 writer.persistRequiresNew(fixtureAuditNoTemplates(), new AuditContext(
-                        "actor-2", "Bob", null, null, null, null, null, null, false, 0, null));
+                        "actor-2", "Bob", null, null, null, null, null, null, false, 0, null, null));
             });
 
             AuditLogQueryService queryService = context.getBean(AuditLogQueryService.class);
@@ -242,6 +244,38 @@ class AuditLogAutoConfigurationTest {
             assertThat(page.getTotalElements()).isEqualTo(1);
             assertThat(page.getContent().get(0).actorId()).isEqualTo("actor-1");
         });
+    }
+
+    /** WP15 acceptance: with the default {@code audit.log.multi-tenancy.enabled=false}, no
+     * {@link AuditTenantResolver} bean is registered at all - the feature is fully off, not just
+     * inert. */
+    @Test
+    void noAuditTenantResolverBeanByDefault() {
+        contextRunner.run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context).doesNotHaveBean(AuditTenantResolver.class);
+        });
+    }
+
+    /** WP15 acceptance: flipping the flag registers the header-based default. */
+    @Test
+    void auditTenantResolverRegisteredWhenMultiTenancyEnabled() {
+        contextRunner.withPropertyValues("audit.log.multi-tenancy.enabled=true").run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context.getBean(AuditTenantResolver.class)).isInstanceOf(DefaultAuditTenantResolver.class);
+        });
+    }
+
+    /** A user-supplied {@link AuditTenantResolver} overrides the header-based default, same as
+     * every other {@code @ConditionalOnMissingBean} SPI in this starter. */
+    @Test
+    void userSuppliedAuditTenantResolverOverridesDefault() {
+        contextRunner.withPropertyValues("audit.log.multi-tenancy.enabled=true")
+                .withUserConfiguration(CustomTenantResolverConfig.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(AuditTenantResolver.class).resolveTenantId()).isEqualTo("custom-tenant");
+                });
     }
 
     private Audit fixtureAudit() {
@@ -297,6 +331,14 @@ class AuditLogAutoConfigurationTest {
         @Override
         public String resolveTemplate(String name, String template, AuditContext context) {
             return "stub";
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class CustomTenantResolverConfig {
+        @Bean
+        AuditTenantResolver auditTenantResolver() {
+            return () -> "custom-tenant";
         }
     }
 

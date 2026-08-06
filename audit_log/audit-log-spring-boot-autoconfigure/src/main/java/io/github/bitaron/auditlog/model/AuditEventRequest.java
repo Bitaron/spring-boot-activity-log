@@ -35,6 +35,10 @@ import java.util.List;
  * @param durationMillis  how long the described operation took, in milliseconds, or {@code 0}
  * @param traceId         a distributed-tracing trace id to correlate this event with, or
  *                        {@code null}
+ * @param tenantId        the tenant this event belongs to, or {@code null} if not applicable/known
+ *                        - the caller supplies this explicitly, same as {@link #actorId}, since
+ *                        there is no ambient request context for this entry point to resolve it
+ *                        from (see {@link io.github.bitaron.auditlog.contract.AuditTenantResolver})
  */
 public record AuditEventRequest(
         String auditType,
@@ -52,7 +56,8 @@ public record AuditEventRequest(
         Object exception,
         boolean exceptionThrown,
         long durationMillis,
-        String traceId
+        String traceId,
+        String tenantId
 ) {
     public AuditEventRequest {
         if (auditType == null || auditType.isBlank()) {

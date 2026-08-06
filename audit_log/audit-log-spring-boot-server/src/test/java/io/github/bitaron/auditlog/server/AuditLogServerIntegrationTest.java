@@ -99,6 +99,27 @@ class AuditLogServerIntegrationTest {
                 assertThat(findByAuditType("remote-event-binary")).hasSize(1));
     }
 
+    /** WP15 acceptance: {@code tenant_id} round-trips through ingest even with
+     * {@code audit.log.server.multi-tenancy.required} left off (the default). */
+    @Test
+    void ingestWithTenantIdPersistsIt() throws Exception {
+        AuditEventRequest request = AuditEventRequest.newBuilder()
+                .setAuditType("remote-event-tenant")
+                .setActorId("tenant-actor")
+                .setTenantId("tenant-a")
+                .build();
+
+        mockMvc.perform(post("/audit-log/events")
+                        .header(API_KEY_HEADER, API_KEY)
+                        .contentType("application/x-protobuf")
+                        .content(request.toByteArray()))
+                .andExpect(status().isAccepted());
+
+        Awaitility.await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                assertThat(findByAuditType("remote-event-tenant"))
+                        .extracting(AuditLog::getTenantId).containsExactly("tenant-a"));
+    }
+
     private List<AuditLog> findByAuditType(String auditType) {
         return new TransactionTemplate(transactionManager).execute(status ->
                 entityManager.createQuery("select a from AuditLog a where a.auditType = :t", AuditLog.class)

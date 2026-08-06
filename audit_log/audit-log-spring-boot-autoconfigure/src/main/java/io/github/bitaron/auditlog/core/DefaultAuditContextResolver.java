@@ -3,6 +3,7 @@ package io.github.bitaron.auditlog.core;
 import io.github.bitaron.auditlog.annotation.Audit;
 import io.github.bitaron.auditlog.contract.AuditLogGenericDataGetter;
 import io.github.bitaron.auditlog.contract.AuditLogLocationResolver;
+import io.github.bitaron.auditlog.contract.AuditTenantResolver;
 import io.github.bitaron.auditlog.model.AuditContext;
 import io.github.bitaron.auditlog.properties.AuditLogProperties;
 import jakarta.servlet.http.HttpServletRequest;
@@ -35,13 +36,16 @@ public class DefaultAuditContextResolver implements AuditContextResolver {
     private final AuditLogGenericDataGetter auditLogGenericDataGetter;
     private final AuditLogProperties auditLogProperties;
     private final AuditLogLocationResolver auditLogLocationResolver;
+    private final AuditTenantResolver auditTenantResolver;
 
     public DefaultAuditContextResolver(AuditLogGenericDataGetter auditLogGenericDataGetter,
                                         AuditLogProperties auditLogProperties,
-                                        AuditLogLocationResolver auditLogLocationResolver) {
+                                        AuditLogLocationResolver auditLogLocationResolver,
+                                        AuditTenantResolver auditTenantResolver) {
         this.auditLogGenericDataGetter = auditLogGenericDataGetter;
         this.auditLogProperties = auditLogProperties;
         this.auditLogLocationResolver = auditLogLocationResolver;
+        this.auditTenantResolver = auditTenantResolver;
     }
 
     @Override
@@ -76,9 +80,15 @@ public class DefaultAuditContextResolver implements AuditContextResolver {
             }
         }
 
+        // Resolved unconditionally, not nested in the actorSource switch above: tenant identity is
+        // orthogonal to actor identity (see AuditTenantResolver's javadoc) - a SYSTEM-actor
+        // scheduled job still runs on behalf of one tenant. null when no AuditTenantResolver bean
+        // is registered, i.e. audit.log.multi-tenancy.enabled=false (the default).
+        String tenantId = auditTenantResolver != null ? auditTenantResolver.resolveTenantId() : null;
+
         return new AuditContext(actorId, actorName, clientLocation, clientIp, userAgent,
                 args, exceptionThrown ? null : result, exceptionThrown ? result : null, exceptionThrown,
-                durationMillis, MDC.get("traceId"));
+                durationMillis, MDC.get("traceId"), tenantId);
     }
 
     private CommonActor resolveCommonActor() {
