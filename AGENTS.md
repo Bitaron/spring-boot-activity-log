@@ -26,6 +26,7 @@ audit_log/
   audit-log-spring-boot-server/                 optional REST ingestion/query server, off by default
   audit-log-java-client/                        typed Java HTTP client for the server module
 audit_log_usage_example/                        runnable demo app + integration test
+audit_log_standalone_server/                    runnable standalone deployment of the REST server module
 docs/
   SCALING.md                                    large-data operation: pagination, retention, partitioning
   CLIENT_CODEGEN.md                              generating a client for the REST server, any language
@@ -34,7 +35,8 @@ db/migration/V2__audit_log_v2.sql               1.x -> 2.x schema migration (Pos
 
 Dependency direction: `starter` -> `autoconfigure`. `server` -> `starter` (not `autoconfigure`
 directly - see "Conventions" #12) + `server-proto`. `java-client` -> `server-proto` only. The demo
-app -> `starter`. Never add a dependency that points the other way.
+app -> `starter`. The standalone-server app -> `audit-log-spring-boot-server`. Never add a
+dependency that points the other way.
 
 ## Package/class map
 
@@ -70,6 +72,7 @@ app -> `starter`. Never add a dependency that points the other way.
 | | `ApiKeyAuthFilter` | Requires `X-API-Key` on every `/audit-log/*` request |
 | | `ProtoMapper` | Wire<->domain mapping, one place |
 | `audit-log-java-client` | `AuditLogHttpClient` | Thin `RestClient` wrapper |
+| `audit_log_standalone_server` | `AuditLogServerApplication` | Runnable standalone deployment of the REST server - H2 by default, `postgres` profile available; requires `audit.log.server.api-key` supplied externally at startup (see "Build & test") |
 
 ## Build & test
 
@@ -78,12 +81,30 @@ internals - see the comment in the root `pom.xml`).
 
 ```bash
 mvn clean install                                                # everything, from repo root
+
+# Path 1: library jars only (the 5 audit-log-* modules) - installable/publishable, for use as a
+# dependency in any Spring Boot app. Scoped to audit_log/pom.xml's own <modules>, so it never
+# touches either runnable app below.
+mvn -f audit_log/pom.xml clean install
+mvn -f audit_log/pom.xml clean deploy -P release                   # actual publish - existing
+                                                                     # OSSRH + GPG release profile
+
 mvn -pl audit_log/audit-log-spring-boot-autoconfigure test        # core module only
 mvn -pl audit_log/audit-log-spring-boot-server test                # REST server module only
 mvn -pl audit_log/audit-log-java-client test                       # client module only (starts a
                                                                      # real embedded server at a
                                                                      # random port to test against)
 cd audit_log_usage_example && mvn spring-boot:run                   # runnable demo, localhost:8080
+
+# Path 2: run the REST server standalone. H2 in-memory by default; audit.log.server.api-key has no
+# default (fails fast at startup if unset - see AuditLogServerAutoConfiguration) and must be
+# supplied externally. Spring's relaxed env-var binding drops dashes entirely, so
+# "audit.log.server.api-key" becomes AUDIT_LOG_SERVER_APIKEY, not ..._API_KEY.
+AUDIT_LOG_SERVER_APIKEY=<your-secret> mvn -f audit_log_standalone_server/pom.xml spring-boot:run
+
+# ...or against Postgres instead (docker-compose.yml lives in that module's directory):
+cd audit_log_standalone_server && docker compose up -d
+AUDIT_LOG_SERVER_APIKEY=<your-secret> mvn spring-boot:run -Dspring-boot.run.profiles=postgres
 ```
 
 `audit-log-server-proto` downloads a `protoc` binary (`os-maven-plugin` + `protobuf-maven-plugin`)

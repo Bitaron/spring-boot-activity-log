@@ -38,8 +38,15 @@ internals - see the comment in `pom.xml` for details. Revisit once Lombok catche
 mvn clean install
 ```
 
-This builds the starter, installs it to the local Maven repository, then builds the demo app
-against that local build (not a published release).
+This builds the starter, installs it to the local Maven repository, then builds the demo app and
+the standalone server app (below) against that local build (not a published release).
+
+To build **just the library jars** - installable to a local repo, or publishable, for use as a
+dependency in any Spring Boot app - without the demo/standalone apps:
+
+```bash
+mvn -f audit_log/pom.xml clean install
+```
 
 ## Run the demo
 
@@ -62,6 +69,21 @@ Inspect the database live at `http://localhost:8080/h2-console` (JDBC URL
 For a realistic run against PostgreSQL instead: `docker compose up -d` in
 `audit_log_usage_example`, then `mvn spring-boot:run -Dspring-boot.run.profiles=postgres`.
 
+## Run the REST server standalone
+
+`audit_log/audit-log-spring-boot-server` is a pure library (no main class) - `audit_log_standalone_server`
+is the runnable app around it, for a caller with no in-process JVM to depend on the library from:
+
+```bash
+AUDIT_LOG_SERVER_APIKEY=<your-secret> mvn -f audit_log_standalone_server/pom.xml spring-boot:run
+```
+
+`audit.log.server.api-key` has no default - the app fails fast at startup if it's unset, since
+there's no safe default that leaves the ingest/query endpoints open. Note Spring's relaxed
+environment-variable binding drops dashes entirely, so the property maps to `AUDIT_LOG_SERVER_APIKEY`
+(not `..._API_KEY`). See [its README](audit_log_standalone_server/README.md) for the Postgres
+profile and a curl smoke test.
+
 ## Modules
 
 - **`audit_log/audit-log-spring-boot-autoconfigure`** - the auto-configuration and implementation.
@@ -81,6 +103,9 @@ For a realistic run against PostgreSQL instead: `docker compose up -d` in
 - **`audit_log/audit-log-java-client`** - a typed Java HTTP client for the server module above.
 - **`audit_log_usage_example`** - a minimal Spring Boot app wiring the starter in, used both as a
   runnable demo and as an integration test target (`mvn test` in that module).
+- **`audit_log_standalone_server`** - the runnable standalone deployment of
+  `audit-log-spring-boot-server`, for a caller with no in-process JVM to depend on the library
+  from. H2 by default, `postgres` profile available; see [its README](audit_log_standalone_server/README.md).
 
 For large-data operation (pagination at scale, retention, table partitioning) see
 [`docs/SCALING.md`](docs/SCALING.md).
