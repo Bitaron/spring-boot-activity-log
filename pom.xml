@@ -80,5 +80,6 @@
     <modules>
         <module>audit_log</module>
         <module>audit_log_usage_example</module>
+        <module>audit_log_standalone_server</module>
     </modules>
 </project>
