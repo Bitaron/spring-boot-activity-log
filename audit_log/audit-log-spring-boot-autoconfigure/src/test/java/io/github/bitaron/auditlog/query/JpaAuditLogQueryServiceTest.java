@@ -122,6 +122,25 @@ class JpaAuditLogQueryServiceTest {
         });
     }
 
+    /** WP17 acceptance: {@link AuditRecord#toCursor()} is equivalent to manually constructing
+     * {@code new AuditCursor(last.createdAt(), last.id())} - same pages, same order. */
+    @Test
+    void toCursorProducesTheSamePagesAsManualCursorConstruction() {
+        contextRunner.run(context -> {
+            seedRows(context, SEED_ROW_COUNT);
+            AuditLogQueryService queryService = context.getBean(AuditLogQueryService.class);
+
+            List<AuditRecord> firstPage = queryService.findAfter(AuditQuery.all(), null, 2);
+            AuditRecord last = firstPage.get(firstPage.size() - 1);
+
+            List<AuditRecord> viaToCursor = queryService.findAfter(AuditQuery.all(), last.toCursor(), 2);
+            List<AuditRecord> viaManualCursor = queryService.findAfter(
+                    AuditQuery.all(), new AuditCursor(last.createdAt(), last.id()), 2);
+
+            assertThat(viaToCursor).isEqualTo(viaManualCursor);
+        });
+    }
+
     /**
      * WP15 acceptance: with the default {@code audit.log.multi-tenancy.enabled=false}, rows from
      * every tenant (including no tenant at all) are returned exactly as before this feature

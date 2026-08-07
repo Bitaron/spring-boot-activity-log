@@ -173,8 +173,7 @@ grow with how deep into the result set you are, unlike `OFFSET`/`LIMIT`:
 
 ```java
 List<AuditRecord> page = auditLogQueryService.findAfter(AuditQuery.all(), cursor, 200);
-AuditRecord last = page.get(page.size() - 1);
-AuditCursor nextCursor = new AuditCursor(last.createdAt(), last.id()); // pass into the next call
+AuditCursor nextCursor = page.get(page.size() - 1).toCursor(); // pass into the next call
 ```
 
 Start with `cursor = null` for the first page; a page shorter than the requested limit means
