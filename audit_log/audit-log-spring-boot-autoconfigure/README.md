@@ -214,11 +214,26 @@ record but no method invocation to intercept - a message-queue consumer, a batch
 server module below - use `AuditLogRecorder` directly:
 
 ```java
-auditLogRecorder.record(new AuditEventRequest(
-        "PAYMENT", "capture", "UPDATE", "", List.of("payment_captured"),
-        actorId, actorName, clientIp, clientLocation, userAgent,
-        args, result, exception, exceptionThrown, durationMillis, traceId, tenantId));
+auditLogRecorder.record(AuditEventRequest.builder("PAYMENT")
+        .actionName("capture")
+        .actionType("UPDATE")
+        .templates(List.of("payment_captured"))
+        .actorId(actorId)
+        .actorName(actorName)
+        .clientIp(clientIp)
+        .clientLocation(clientLocation)
+        .userAgent(userAgent)
+        .args(args)
+        .success(result)     // or .failure(exception) - each also sets exceptionThrown
+        .durationMillis(durationMillis)
+        .traceId(traceId)
+        .tenantId(tenantId)
+        .build());
 ```
+
+The builder is preferred over the canonical (positional, 17-argument) constructor for anything
+beyond a trivial call - several adjacent `String` fields (`actorId`/`actorName`,
+`clientIp`/`clientLocation`) are easy to transpose without the compiler noticing.
 
 It follows the same delivery pipeline (mode, commit-aware dispatch, metrics, failure isolation) as
 the `@Audit` path - this is an alternate way to get an event *in*, not a different way it's
