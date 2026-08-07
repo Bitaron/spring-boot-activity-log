@@ -4,6 +4,7 @@ import io.github.bitaron.auditlog.server.proto.v1.AuditCursorQueryRequest;
 import io.github.bitaron.auditlog.server.proto.v1.AuditCursorQueryResponse;
 import io.github.bitaron.auditlog.server.proto.v1.AuditEventRequest;
 import io.github.bitaron.auditlog.server.proto.v1.AuditEventResponse;
+import io.github.bitaron.auditlog.server.proto.v1.AuditQueryRequest;
 import io.github.bitaron.auditlog.server.proto.v1.AuditQueryResponse;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -53,6 +55,39 @@ class AuditLogHttpClientTest {
             AuditQueryResponse response = client.query(null, "client-round-trip", null, null, 0, 10);
             assertThat(response.getRecordsList()).hasSize(1);
             assertThat(response.getRecordsList().get(0).getActorId()).isEqualTo("client-actor");
+        });
+    }
+
+    /**
+     * WP17 acceptance: {@link AuditLogHttpClient#query(AuditQueryRequest)} combines multiple
+     * filters (actor + type + a created-at range) in one call, matching only the row that
+     * satisfies all of them - not just whichever filter is exercised in the round-trip test above.
+     */
+    @Test
+    void queryWithMultipleFiltersCombinedMatchesOnlyTheRowSatisfyingAll() {
+        AuditLogHttpClient client = new AuditLogHttpClient("http://localhost:" + port, "client-test-key");
+        LocalDateTime from = LocalDateTime.now().minusMinutes(1);
+
+        client.ingest(AuditEventRequest.newBuilder()
+                .setAuditType("multi-filter-event")
+                .setActorId("multi-filter-actor")
+                .build());
+        client.ingest(AuditEventRequest.newBuilder()
+                .setAuditType("multi-filter-event")
+                .setActorId("some-other-actor")
+                .build());
+
+        Awaitility.await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+            AuditQueryResponse response = client.query(AuditQueryRequest.newBuilder()
+                    .setActorId("multi-filter-actor")
+                    .setAuditType("multi-filter-event")
+                    .setCreatedAtFrom(from.toString())
+                    .setCreatedAtTo(LocalDateTime.now().plusMinutes(1).toString())
+                    .setPage(0)
+                    .setSize(10)
+                    .build());
+            assertThat(response.getRecordsList()).hasSize(1);
+            assertThat(response.getRecords(0).getActorId()).isEqualTo("multi-filter-actor");
         });
     }
 
