@@ -109,3 +109,22 @@ message AuditQueryResponse {
   int32 page = 3;
   int32 size = 4;
 }
+
+// GET /audit-log/records/after query parameters (WP17) - keyset pagination, mirroring
+// AuditLogQueryService#findAfter. cursor_created_at empty (together with cursor_id unset/0) means
+// "first page", the same "empty string = unset" convention AuditQueryRequest above uses. Same
+// deliberate omission of tenant_id as AuditQueryRequest, and for the same reason: reads are scoped
+// server-side by whichever AuditTenantResolver is active, never by anything the client sends here.
+message AuditCursorQueryRequest {
+  string actor_id = 1;
+  string audit_type = 2;
+  string created_at_from = 3;
+  string created_at_to = 4;
+  string cursor_created_at = 5;
+  int64 cursor_id = 6;
+  int32 limit = 7;
+}
+
+message AuditCursorQueryResponse {
+  repeated AuditRecordProto records = 1;
+}

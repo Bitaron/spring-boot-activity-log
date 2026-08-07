@@ -1,8 +1,10 @@
 package io.github.bitaron.auditlog.server;
 
+import io.github.bitaron.auditlog.query.AuditCursor;
 import io.github.bitaron.auditlog.query.AuditLogQueryService;
 import io.github.bitaron.auditlog.query.AuditQuery;
 import io.github.bitaron.auditlog.query.AuditRecord;
+import io.github.bitaron.auditlog.server.proto.v1.AuditCursorQueryResponse;
 import io.github.bitaron.auditlog.server.proto.v1.AuditQueryResponse;
 import io.github.bitaron.auditlog.server.proto.v1.AuditRecordProto;
 import org.springframework.data.domain.Page;
@@ -44,5 +46,33 @@ public class AuditQueryController {
         Page<AuditRecord> result = auditLogQueryService.find(query, PageRequest.of(page, size));
         List<AuditRecordProto> records = result.getContent().stream().map(ProtoMapper::toRecordProto).toList();
         return ProtoMapper.toQueryResponse(records, result.getTotalElements(), page, size);
+    }
+
+    /**
+     * {@code GET /audit-log/records/after}: a thin HTTP wrapper around
+     * {@link AuditLogQueryService#findAfter} (WP11's keyset pagination), so a remote caller isn't
+     * stuck with {@link #query}'s offset pagination once a table is large enough that the "discard
+     * everything before this page" cost of {@code OFFSET}/{@code LIMIT} starts to matter - see
+     * {@code docs/SCALING.md}. {@code cursorCreatedAt}/{@code cursorId} must both be supplied
+     * together (the position of the last row already seen), or neither (first page).
+     */
+    @GetMapping("/after")
+    public AuditCursorQueryResponse queryAfter(
+            @RequestParam(required = false) String actorId,
+            @RequestParam(required = false) String auditType,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime createdAtFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime createdAtTo,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime cursorCreatedAt,
+            @RequestParam(required = false) Long cursorId,
+            @RequestParam(defaultValue = "50") int limit) {
+        if ((cursorCreatedAt == null) != (cursorId == null)) {
+            throw new IllegalArgumentException(
+                    "cursorCreatedAt and cursorId must both be supplied together, or neither, for the first page");
+        }
+        AuditQuery query = new AuditQuery(actorId, auditType, createdAtFrom, createdAtTo);
+        AuditCursor cursor = cursorCreatedAt == null ? null : new AuditCursor(cursorCreatedAt, cursorId);
+        List<AuditRecordProto> records = auditLogQueryService.findAfter(query, cursor, limit).stream()
+                .map(ProtoMapper::toRecordProto).toList();
+        return ProtoMapper.toCursorQueryResponse(records);
     }
 }

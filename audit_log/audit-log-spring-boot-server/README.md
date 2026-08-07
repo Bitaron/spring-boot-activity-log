@@ -15,6 +15,12 @@ expose HTTP endpoints.
 - `GET /audit-log/records` - `actorId`/`auditType`/`createdAtFrom`/`createdAtTo`/`page`/`size`
   query parameters, same semantics as `AuditLogQueryService.find` (including the
   `audit.log.query.max-page-size` cap).
+- `GET /audit-log/records/after` (WP17) - the same filters plus `cursorCreatedAt`/`cursorId`/
+  `limit`, same semantics as `AuditLogQueryService.findAfter`: keyset ("seek") pagination for once
+  a table is large enough that `/audit-log/records`' offset pagination cost starts to matter (see
+  [`docs/SCALING.md`](../../docs/SCALING.md)). Omit both cursor parameters for the first page;
+  otherwise both must be supplied together (`400` if only one is) - the last returned record's
+  `createdAt`/`id`.
 
 Both accept/return `application/x-protobuf` or, for debugging/curl convenience,
 `application/json` (Protobuf's canonical JSON mapping).

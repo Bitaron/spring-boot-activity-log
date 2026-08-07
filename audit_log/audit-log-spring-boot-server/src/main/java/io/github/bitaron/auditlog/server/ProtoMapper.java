@@ -3,6 +3,7 @@ package io.github.bitaron.auditlog.server;
 import io.github.bitaron.auditlog.entity.AuditOutcome;
 import io.github.bitaron.auditlog.model.AuditEventRequest;
 import io.github.bitaron.auditlog.query.AuditRecord;
+import io.github.bitaron.auditlog.server.proto.v1.AuditCursorQueryResponse;
 import io.github.bitaron.auditlog.server.proto.v1.AuditEventResponse;
 import io.github.bitaron.auditlog.server.proto.v1.AuditOutcomeProto;
 import io.github.bitaron.auditlog.server.proto.v1.AuditQueryResponse;
@@ -87,6 +88,10 @@ final class ProtoMapper {
                 .setPage(page)
                 .setSize(size)
                 .build();
+    }
+
+    static AuditCursorQueryResponse toCursorQueryResponse(List<AuditRecordProto> records) {
+        return AuditCursorQueryResponse.newBuilder().addAllRecords(records).build();
     }
 
     private static AuditOutcomeProto toOutcomeProto(AuditOutcome outcome) {

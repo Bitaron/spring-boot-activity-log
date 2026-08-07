@@ -1,5 +1,7 @@
 package io.github.bitaron.auditlog.client;
 
+import io.github.bitaron.auditlog.server.proto.v1.AuditCursorQueryRequest;
+import io.github.bitaron.auditlog.server.proto.v1.AuditCursorQueryResponse;
 import io.github.bitaron.auditlog.server.proto.v1.AuditEventRequest;
 import io.github.bitaron.auditlog.server.proto.v1.AuditEventResponse;
 import io.github.bitaron.auditlog.server.proto.v1.AuditQueryResponse;
@@ -79,5 +81,39 @@ class AuditLogHttpClientTest {
 
         assertThat(response.getAccepted()).isTrue();
         assertThat(requestCount.get()).isEqualTo(1);
+    }
+
+    /**
+     * WP17 acceptance: {@link AuditLogHttpClient#queryAfter} walks a 3-row result set two pages
+     * (2 then 1) with no overlap, the same keyset-pagination guarantee
+     * {@code AuditLogQueryService.findAfter} gives in-process, now reachable remotely.
+     */
+    @Test
+    void queryAfterWalksPagesViaKeysetPagination() {
+        AuditLogHttpClient client = new AuditLogHttpClient("http://localhost:" + port, "client-test-key");
+
+        for (String actorId : new String[]{"cursor-actor-1", "cursor-actor-2", "cursor-actor-3"}) {
+            client.ingest(AuditEventRequest.newBuilder()
+                    .setAuditType("client-cursor-pagination")
+                    .setActorId(actorId)
+                    .build());
+        }
+
+        Awaitility.await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+            AuditCursorQueryResponse firstPage = client.queryAfter(AuditCursorQueryRequest.newBuilder()
+                    .setAuditType("client-cursor-pagination")
+                    .setLimit(2)
+                    .build());
+            assertThat(firstPage.getRecordsList()).hasSize(2);
+
+            var last = firstPage.getRecords(1);
+            AuditCursorQueryResponse secondPage = client.queryAfter(AuditCursorQueryRequest.newBuilder()
+                    .setAuditType("client-cursor-pagination")
+                    .setCursorCreatedAt(last.getCreatedAt())
+                    .setCursorId(last.getId())
+                    .setLimit(2)
+                    .build());
+            assertThat(secondPage.getRecordsList()).hasSize(1);
+        });
     }
 }

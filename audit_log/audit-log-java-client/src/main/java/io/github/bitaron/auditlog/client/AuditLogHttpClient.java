@@ -5,6 +5,8 @@ import io.github.bitaron.auditlog.client.exception.AuditLogClientBadRequestExcep
 import io.github.bitaron.auditlog.client.exception.AuditLogClientConnectionException;
 import io.github.bitaron.auditlog.client.exception.AuditLogClientException;
 import io.github.bitaron.auditlog.client.exception.AuditLogClientServerException;
+import io.github.bitaron.auditlog.server.proto.v1.AuditCursorQueryRequest;
+import io.github.bitaron.auditlog.server.proto.v1.AuditCursorQueryResponse;
 import io.github.bitaron.auditlog.server.proto.v1.AuditEventRequest;
 import io.github.bitaron.auditlog.server.proto.v1.AuditEventResponse;
 import io.github.bitaron.auditlog.server.proto.v1.AuditQueryRequest;
@@ -145,6 +147,38 @@ public final class AuditLogHttpClient {
                 .accept(PROTOBUF)
                 .retrieve()
                 .body(AuditQueryResponse.class));
+    }
+
+    /**
+     * {@code GET /audit-log/records/after}: keyset ("seek") pagination, for once a table is large
+     * enough that {@link #query}'s offset pagination cost (discarding every row before the
+     * requested page) starts to matter - see {@code docs/SCALING.md}. {@code request}'s
+     * {@code cursorCreatedAt}/{@code cursorId} should both be left unset for the first page;
+     * otherwise both should be the last {@code AuditRecordProto} of the previous page (its
+     * {@code createdAt}/{@code id}).
+     *
+     * @throws AuditLogClientAuthenticationException if the configured API key is missing/invalid
+     * @throws AuditLogClientBadRequestException      if the server rejects the request itself
+     * @throws AuditLogClientServerException          if the server responds with a {@code 5xx}
+     * @throws AuditLogClientConnectionException      if the request never reaches the server
+     */
+    public AuditCursorQueryResponse queryAfter(AuditCursorQueryRequest request) {
+        Optional<String> cursorCreatedAt = optionalNonEmpty(request.getCursorCreatedAt());
+        return execute(() -> restClient.get()
+                .uri(uriBuilder -> uriBuilder.path("/audit-log/records/after")
+                        .queryParamIfPresent("actorId", optionalNonEmpty(request.getActorId()))
+                        .queryParamIfPresent("auditType", optionalNonEmpty(request.getAuditType()))
+                        .queryParamIfPresent("createdAtFrom", optionalNonEmpty(request.getCreatedAtFrom()))
+                        .queryParamIfPresent("createdAtTo", optionalNonEmpty(request.getCreatedAtTo()))
+                        .queryParamIfPresent("cursorCreatedAt", cursorCreatedAt)
+                        .queryParamIfPresent("cursorId", cursorCreatedAt.isPresent()
+                                ? Optional.of(request.getCursorId()) : Optional.empty())
+                        .queryParam("limit", request.getLimit())
+                        .build())
+                .header(API_KEY_HEADER, apiKey)
+                .accept(PROTOBUF)
+                .retrieve()
+                .body(AuditCursorQueryResponse.class));
     }
 
     private static Optional<String> optionalNonEmpty(String value) {

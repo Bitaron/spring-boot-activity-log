@@ -1,5 +1,6 @@
 package io.github.bitaron.auditlog.server;
 
+import com.jayway.jsonpath.JsonPath;
 import io.github.bitaron.auditlog.entity.AuditLog;
 import io.github.bitaron.auditlog.server.proto.v1.AuditEventRequest;
 import jakarta.persistence.EntityManager;
@@ -150,6 +151,66 @@ class AuditLogServerIntegrationTest {
                         .contentType("application/x-protobuf")
                         .content(request.toByteArray()))
                 .andExpect(status().isBadRequest());
+    }
+
+    /**
+     * WP17 acceptance: {@code GET /audit-log/records/after} keyset-paginates the same way
+     * {@link io.github.bitaron.auditlog.query.AuditLogQueryService#findAfter} does in-process -
+     * walking two pages of 2 with a 3-row result set returns 2 then 1, with no overlap.
+     */
+    @Test
+    void queryAfterWalksPagesViaKeysetPagination() throws Exception {
+        ingest("cursor-pagination-event", "actor-1");
+        ingest("cursor-pagination-event", "actor-2");
+        ingest("cursor-pagination-event", "actor-3");
+
+        Awaitility.await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                assertThat(findByAuditType("cursor-pagination-event")).hasSize(3));
+
+        String firstPageBody = mockMvc.perform(get("/audit-log/records/after")
+                        .header(API_KEY_HEADER, API_KEY)
+                        .param("auditType", "cursor-pagination-event")
+                        .param("limit", "2")
+                        .accept("application/json"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.records.length()").value(2))
+                .andReturn().getResponse().getContentAsString();
+
+        String lastCreatedAt = JsonPath.read(firstPageBody, "$.records[1].createdAt");
+        String lastId = String.valueOf((Object) JsonPath.read(firstPageBody, "$.records[1].id"));
+
+        mockMvc.perform(get("/audit-log/records/after")
+                        .header(API_KEY_HEADER, API_KEY)
+                        .param("auditType", "cursor-pagination-event")
+                        .param("cursorCreatedAt", lastCreatedAt)
+                        .param("cursorId", lastId)
+                        .param("limit", "2")
+                        .accept("application/json"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.records.length()").value(1));
+    }
+
+    /** A cursor with only one of the two required fields is rejected, rather than silently
+     * treated as "first page" or "no lower bound". */
+    @Test
+    void queryAfterRejectsAHalfSuppliedCursor() throws Exception {
+        mockMvc.perform(get("/audit-log/records/after")
+                        .header(API_KEY_HEADER, API_KEY)
+                        .param("cursorId", "1")
+                        .accept("application/json"))
+                .andExpect(status().isBadRequest());
+    }
+
+    private void ingest(String auditType, String actorId) throws Exception {
+        AuditEventRequest request = AuditEventRequest.newBuilder()
+                .setAuditType(auditType)
+                .setActorId(actorId)
+                .build();
+        mockMvc.perform(post("/audit-log/events")
+                        .header(API_KEY_HEADER, API_KEY)
+                        .contentType("application/x-protobuf")
+                        .content(request.toByteArray()))
+                .andExpect(status().isAccepted());
     }
 
     private List<AuditLog> findByAuditType(String auditType) {
