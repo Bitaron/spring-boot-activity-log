@@ -319,6 +319,23 @@ callers can use `audit-log-java-client`; any other language can generate a clien
 `.proto` schema in `audit-log-server-proto` - see
 [`docs/CLIENT_CODEGEN.md`](../../docs/CLIENT_CODEGEN.md).
 
+A Java, Spring Boot caller can additionally depend on `audit-log-java-client-spring-boot-starter`
+(WP17) for an auto-registered `AuditLogHttpClient` bean instead of constructing one manually -
+off by default (`audit.log.client.enabled=false`), since a bean pointed at a specific external URL
+and holding a secret API key shouldn't appear just because the dependency is on the classpath:
+
+```properties
+audit.log.client.enabled=true
+audit.log.client.base-url=https://audit.example.com
+audit.log.client.api-key=<the value configured as one of audit.log.server.api-keys.<tenantId>>
+audit.log.client.http.connect-timeout=5s
+audit.log.client.http.read-timeout=30s
+```
+
+`audit-log-java-client` itself stays usable outside Spring Boot (or with hand-rolled wiring inside
+it) - this is a separate, opt-in module precisely so depending on the plain client never forces
+`spring-boot-autoconfigure` onto a consumer who doesn't want it.
+
 ## Extension points
 
 - **`AuditLogGenericDataGetter`** - supply your own actor/client resolution (e.g. from
