@@ -19,12 +19,13 @@ Package root: `io.github.bitaron.auditlog` (all-lowercase, deliberately - see "C
 ```
 pom.xml                                        aggregator, version 2.0.0-SNAPSHOT
 audit_log/
-  pom.xml                                      parent for the 5 modules below
+  pom.xml                                      parent for the 6 modules below
   audit-log-spring-boot-autoconfigure/         ALL core implementation + tests + README
   audit-log-spring-boot-starter/               pom-only; what consumers of the core library depend on
   audit-log-server-proto/                       .proto IDL + generated Java stubs, no Spring dependency
   audit-log-spring-boot-server/                 optional REST ingestion/query server, off by default
-  audit-log-java-client/                        typed Java HTTP client for the server module
+  audit-log-java-client/                        typed Java HTTP client for the server module, no Spring dependency
+  audit-log-java-client-spring-boot-starter/    (WP17) opt-in Spring Boot auto-config for the client above
 audit_log_usage_example/                        runnable demo app + integration test
 audit_log_standalone_server/                    runnable standalone deployment of the REST server module
 docs/
@@ -36,9 +37,11 @@ db/migration/V4__audit_log_tenant_scoped_templates_groups.sql   tenant-scopes au
 ```
 
 Dependency direction: `starter` -> `autoconfigure`. `server` -> `starter` (not `autoconfigure`
-directly - see "Conventions" #12) + `server-proto`. `java-client` -> `server-proto` only. The demo
-app -> `starter`. The standalone-server app -> `audit-log-spring-boot-server`. Never add a
-dependency that points the other way.
+directly - see "Conventions" #12) + `server-proto`. `java-client` -> `server-proto` only.
+`java-client-spring-boot-starter` -> `java-client` (a separate artifact specifically so a
+non-Spring-Boot consumer of the plain client never gets `spring-boot-autoconfigure` forced onto its
+classpath - see "Conventions" #17). The demo app -> `starter`. The standalone-server app ->
+`audit-log-spring-boot-server`. Never add a dependency that points the other way.
 
 ## Package/class map
 
@@ -49,7 +52,7 @@ dependency that points the other way.
 | `annotation` | `Audit`, `ActorSource`, `AuditDeliveryMode`, `Audits`, `AuditIgnore` | The user-facing annotation and its attribute types |
 | `autoconfigure` | `AuditLogAutoConfiguration` | Everything is wired here; every `@Bean` is `@ConditionalOnMissingBean` |
 | | `AuditLogEntityScanRegistrar` | Adds this starter's entities to the host's entity scan *additively* |
-| `contract` | `AuditTemplateSource`, `AuditLogTemplateResolver`, `AuditLogArgumentSerializer`, `AuditLogGenericDataGetter`, `AuditLogLocationResolver`, `AuditMetricsRecorder`, `AuditLogRecorder`, `AuditTenantResolver` | SPIs a consumer can implement to override defaults |
+| `contract` | `AuditTemplateSource`, `AuditLogTemplateResolver`, `AuditLogArgumentSerializer`, `AuditLogGenericDataGetter`, `AuditLogLocationResolver`, `AuditMetricsRecorder`, `AuditLogRecorder`, `AuditTenantResolver` | SPIs a consumer can implement to override defaults. **(WP17)** `AuditLogGenericDataGetter`'s 5 methods are now `default` (fallback to what `DefaultAuditContextResolver` already used) - override only what you need |
 | `core` | `AuditLogAspect` | Single `@Around` advice, `@Order(LOWEST_PRECEDENCE - 1)` |
 | | `AuditContextResolver` / `DefaultAuditContextResolver` | The **only** place that reads ambient request state |
 | | `AuditLogger` | Delivery-mode dispatch (sync/async, per-call and global) |
@@ -61,22 +64,26 @@ dependency that points the other way.
 | | `FreemarkerTemplateResolver`, `JacksonAuditLogArgumentSerializer` | Default template/serialization implementations |
 | | `DefaultAuditTenantResolver` | Header-based default tenant resolution, opt-in (see "Conventions" #14) |
 | | `PropertiesAuditTemplateSource`, `DatabaseAuditTemplateSource` | Tenant-scoped (WP16) - a tenant-tagged template/row wins over the global one for that tenant, global as fallback |
-| `model` | `AuditContext`, `AuditEventRequest` | Immutable data carriers through the write pipeline |
+| `model` | `AuditContext`, `AuditEventRequest` | Immutable data carriers through the write pipeline. **(WP17)** `AuditEventRequest.Builder` (via `AuditEventRequest.builder(auditType)`, plus `success(result)`/`failure(exception)` convenience methods keeping `result`/`exception`/`exceptionThrown` consistent) - the positional 17-arg constructor has several adjacent `String` params (`actorId`/`actorName`, `clientIp`/`clientLocation`) that are easy to transpose |
 | `entity` | `AuditLog`, `AuditLogMessage`, `AuditOutcome`, `AuditTemplate`, `AuditGroup` | JPA entities - not the public read API, see `query`. `AuditTemplate`/`AuditGroup` are tenant-scoped via `GLOBAL_TENANT_ID = ""` (WP16 - see "Conventions" #15) |
-| `query` | `AuditLogQueryService` / `JpaAuditLogQueryService`, `AuditQuery`, `AuditRecord`, `AuditCursor` | The supported read API |
+| `query` | `AuditLogQueryService` / `JpaAuditLogQueryService`, `AuditQuery`, `AuditRecord`, `AuditCursor` | The supported read API. **(WP17)** `AuditQuery` gained static factories (`byActor`/`byType`/`byActorAndType`, alongside the existing `all()`) and immutable withers (`withActor`/`withType`/`withCreatedBetween`); `AuditRecord.toCursor()` is the named equivalent of `new AuditCursor(record.createdAt(), record.id())` for paging with `findAfter` |
 | `properties` | `AuditLogProperties` | `@ConfigurationProperties("audit.log")`, nested `Headers`/`Executor`/`SchemaValidation`/`Query`/`Retention`/`MultiTenancy`; `Retention.tenantMaxAge` and a top-level `tenantTemplates` map are WP16 additions |
+| `testsupport` (test-jar) | `AuditLogAssertions` | **(WP17)** Published as this module's `tests` classifier - `awaitRecord`/`awaitRecords` (poll `AuditLogQueryService` for `ASYNC`-delivered writes), `messagesFor`, `clearAuditLog`. Lets a consuming application's own tests assert through the documented read API instead of raw `EntityManager`/JPQL - see "Testing patterns" |
 
-### Server/client (`audit-log-server-proto`, `audit-log-spring-boot-server`, `audit-log-java-client`)
+### Server/client (`audit-log-server-proto`, `audit-log-spring-boot-server`, `audit-log-java-client`, `audit-log-java-client-spring-boot-starter`)
 
 | Module | Key classes | Role |
 |---|---|---|
-| `audit-log-server-proto` | Generated from `audit_event.proto` | `AuditEventRequest`/`Response`, `AuditRecordProto`, `AuditQueryRequest`/`Response`, `AuditOutcomeProto` |
-| `audit-log-spring-boot-server` | `AuditLogServerAutoConfiguration` | Gated by `audit.log.server.enabled` (default `false`); also requires `audit.log.multi-tenancy.enabled=true` (WP16) |
-| | `AuditIngestController` / `AuditQueryController` | `POST /audit-log/events`, `GET /audit-log/records` |
+| `audit-log-server-proto` | Generated from `audit_event.proto` | `AuditEventRequest`/`Response`, `AuditRecordProto`, `AuditQueryRequest`/`Response`, `AuditOutcomeProto`. **(WP17)** `AuditCursorQueryRequest`/`Response` for keyset pagination over the wire |
+| `audit-log-spring-boot-server` | `AuditLogServerAutoConfiguration` | Gated by `audit.log.server.enabled` (default `false`); also requires `audit.log.multi-tenancy.enabled=true` (WP16). **(WP17)** now explicitly registers `AuditServerExceptionHandler` as a `@Bean` - see "Conventions" #17 |
+| | `AuditIngestController` / `AuditQueryController` | `POST /audit-log/events`, `GET /audit-log/records`. **(WP17)** `AuditQueryController` also serves `GET /audit-log/records/after` (keyset pagination, mirrors `AuditLogQueryService#findAfter`) |
 | | `ApiKeyAuthFilter` | Per-tenant (WP16): `X-API-Key` must match one of `audit.log.server.api-keys.<tenantId>`; resolves *which* tenant, not just whether the request is allowed |
 | | `ApiKeyAuditTenantResolver` | WP16: the `AuditTenantResolver` this module registers - reads the tenant `ApiKeyAuthFilter` authenticated, not a client-suppliable header |
 | | `ProtoMapper` | Wire<->domain mapping, one place |
-| `audit-log-java-client` | `AuditLogHttpClient` | Thin `RestClient` wrapper |
+| `audit-log-java-client` | `AuditLogHttpClient` | Thin `RestClient` wrapper, no Spring Boot dependency - see its own README. **(WP17)** gained a `RestClient.Builder`-accepting constructor (the seam the starter module below injects a Boot-managed, timeout-configured builder through), `query(AuditQueryRequest)` (the existing 6-arg overload now delegates to it), and `queryAfter` for keyset pagination |
+| | `exception.AuditLogClientException` + 4 subtypes | **(WP17)** `Authentication`/`BadRequest`/`Server`/`Connection` - translates `RestClient`'s generic response exceptions into typed ones a caller can actually branch on |
+| | `AuditRecordProtos` | **(WP17)** `createdAt(AuditRecordProto)` - parses the raw ISO-8601 wire string back to a `LocalDateTime`, since the generated proto class can't be hand-edited to add the method itself |
+| `audit-log-java-client-spring-boot-starter` | `AuditLogClientAutoConfiguration` | **(WP17, new module)** Gated by `audit.log.client.enabled` (default `false`); registers an `AuditLogHttpClient` bean from `audit.log.client.base-url`/`api-key`/`http.connect-timeout`/`http.read-timeout` |
 | `audit_log_standalone_server` | `AuditLogServerApplication` | Runnable standalone deployment of the REST server - H2 by default, `postgres` profile available; requires at least one `audit.log.server.api-keys.<tenantId>` entry supplied externally at startup (see "Build & test") |
 
 ## Build & test
@@ -99,6 +106,7 @@ mvn -pl audit_log/audit-log-spring-boot-server test                # REST server
 mvn -pl audit_log/audit-log-java-client test                       # client module only (starts a
                                                                      # real embedded server at a
                                                                      # random port to test against)
+mvn -pl audit_log/audit-log-java-client-spring-boot-starter test   # client auto-config module only
 cd audit_log_usage_example && mvn spring-boot:run                   # runnable demo, localhost:8080
 
 # Path 2: run the REST server standalone. H2 in-memory by default; at least one
@@ -143,9 +151,13 @@ on first build - needs outbound access to Maven Central or a mirror.
 | `audit.log.retention.tenant-max-age.<tenantId>` | - | Per-tenant retention window override (WP16); falls back to `retention.max-age` |
 | `audit.log.server.enabled` | `false` | Master switch for the REST server module; requires `audit.log.multi-tenancy.enabled=true` (WP16) |
 | `audit.log.server.api-keys.<tenantId>` | *(at least one required if enabled)* | Per-tenant API key (WP16) - which tenant a request acts as is authenticated by which key it presents |
+| `audit.log.client.enabled` | `false` | **(WP17)** Master switch for the auto-registered `AuditLogHttpClient` bean (`audit-log-java-client-spring-boot-starter`) |
+| `audit.log.client.base-url` | *(required if enabled)* | The REST server module's base URL |
+| `audit.log.client.api-key` | - | The value configured as one of `audit.log.server.api-keys.<tenantId>` on the server - determines which tenant this client acts as |
+| `audit.log.client.http.connect-timeout` / `read-timeout` | `5s` / `30s` | Timeouts for every request this client makes |
 
-Full property javadoc lives on `AuditLogProperties`/`AuditLogServerProperties` themselves - this
-table is for discovery, not the last word on behavior.
+Full property javadoc lives on `AuditLogProperties`/`AuditLogServerProperties`/
+`AuditLogClientProperties` themselves - this table is for discovery, not the last word on behavior.
 
 ## Conventions and load-bearing decisions - do not "simplify" these
 
@@ -230,6 +242,18 @@ here for fast lookup.
     `audit.log.multi-tenancy.enabled` isn't also `true`: per-tenant keys without the core
     starter's tenant-scoped read enforcement would authenticate a tenant identity that nothing
     then confines reads by, which would be misleading rather than merely incomplete.
+17. **`AuditServerExceptionHandler` (`@RestControllerAdvice`) is registered explicitly as a
+    `@Bean` in `AuditLogServerAutoConfiguration` (WP17), not left to component scanning.**
+    `@RestControllerAdvice` is a scanning stereotype - whether it was ever picked up depended
+    entirely on whether the host application's `@SpringBootApplication` base package happened to
+    cover `io.github.bitaron.auditlog.server`. Every one of this module's own tests had a test
+    application that either did (passing by coincidence) or never exercised a caller-error path at
+    all, so this went undetected until `AuditLogHttpClientErrorHandlingTest` (client exception
+    hierarchy work) hit it directly: a real host application's base package essentially never
+    overlaps with this library's, so every `IllegalArgumentException`/`IllegalStateException` the
+    controllers throw silently surfaced as an unhelpful `500` instead of the documented `400`.
+    Caught empirically - explicit `@Bean` registration is required for every stereotype-annotated
+    class this starter ships, not just the ones already written that way.
 
 ## Testing patterns
 
@@ -277,7 +301,9 @@ here for fast lookup.
 - Each module's own `README.md` (`audit_log/audit-log-spring-boot-autoconfigure/README.md` is the
   primary one - usage examples, extension points, the actor-identity trust model;
   `audit_log/audit-log-spring-boot-server/README.md` covers the REST endpoints and per-tenant
-  authentication specifically).
+  authentication specifically; `audit_log/audit-log-java-client/README.md` and
+  `audit_log/audit-log-java-client-spring-boot-starter/README.md` (WP17) cover the typed HTTP
+  client and its optional Boot auto-config).
 
 ## Contribution conventions
 

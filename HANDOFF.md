@@ -9,7 +9,7 @@ itself.
 
 ## TL;DR
 
-Four passes are **complete**:
+Five passes are **complete**:
 
 - **v2** (WP0-WP7): the architecture/API redesign - package rename, annotation redesign, commit-
   aware dispatch, data model fix, typed config, read API. See the "v2" sections below.
@@ -29,8 +29,18 @@ Four passes are **complete**:
   `audit.log.server.api-keys.<tenantId>`, and `AuditTemplateSource.findTemplate` gained a
   `tenantId` parameter. See "Decisions" #15-16 and `MIGRATION.md`'s "Breaking changes in WP16"
   section for the full shape.
+- **WP17: client/API ergonomics pass** (WP17a-k, 11 commits) - purely additive, no breaking
+  changes. Builder/factory ergonomics (`AuditEventRequest.Builder`, `AuditQuery` static
+  factories/withers, `AuditRecord.toCursor()`); `AuditLogGenericDataGetter`'s 5 methods became
+  `default`; a published `testsupport.AuditLogAssertions` test-support artifact (the `tests`
+  classifier); `AuditLogHttpClient` gained an injectable `RestClient.Builder` constructor, a typed
+  `exception.AuditLogClientException` hierarchy, and keyset pagination (`queryAfter`, plus the
+  matching `GET /audit-log/records/after` server endpoint and `AuditCursorQueryRequest`/`Response`
+  proto messages); a new `audit-log-java-client-spring-boot-starter` module auto-registers
+  `AuditLogHttpClient` from `audit.log.client.*` properties. Writing the client's error-handling
+  test surfaced and fixed a real pre-existing server bug - see "Decisions" #17.
 
-`mvn clean install` must stay green across all 7 modules - see "How to verify" below for the exact
+`mvn clean install` must stay green across all 8 modules - see "How to verify" below for the exact
 commands; module/test counts aren't repeated here to avoid drifting stale as WPs are added.
 
 ## How to verify you're in a good state
@@ -41,6 +51,7 @@ mvn -pl audit_log/audit-log-spring-boot-autoconfigure test     # core starter's 
 mvn -pl audit_log/audit-log-spring-boot-server test             # REST server module's tests
 mvn -pl audit_log/audit-log-java-client test                    # client module's tests (spins up
                                                                   # the real server at a random port)
+mvn -pl audit_log/audit-log-java-client-spring-boot-starter test # client auto-config module's tests
 cd audit_log_usage_example && mvn spring-boot:run                # then curl localhost:8080/test
 ```
 
@@ -117,20 +128,23 @@ client modules use `io.github.bitaron.auditlog.server` / `.client` / `.server.pr
 | | **`AuditCursor`** | **(v3/WP11)** `(createdAt, id)` position for `findAfter` |
 | `properties` | `AuditLogProperties` | `@Validated @ConfigurationProperties("audit.log")`. Nested: `Headers` (**WP15**: `tenantId`), `Executor`, `SchemaValidation`, `Query`, `Retention` (v3, **WP16**: `tenantMaxAge`), **`MultiTenancy`** (WP15). **(WP16)** top-level `tenantTemplates` map |
 
-### Server/client modules (v3/WP13-14)
+### Server/client modules (v3/WP13-14, WP17)
 
 | Module | Package | Class | Role |
 |---|---|---|---|
-| `audit-log-server-proto` | `server.proto.v1` | `AuditEventRequest`/`AuditEventResponse`/`AuditRecordProto`/`AuditQueryRequest`/`AuditQueryResponse`/`AuditOutcomeProto` | Generated from `audit_event.proto`; no Spring dependency |
-| `audit-log-spring-boot-server` | `server` | `AuditLogServerAutoConfiguration` | Gated by `audit.log.server.enabled` (default `false`, no `matchIfMissing`); registers `ProtobufHttpMessageConverter`. **(WP16)** `@AutoConfigureBefore(AuditLogAutoConfiguration.class)` so its `AuditTenantResolver` wins the `@ConditionalOnMissingBean` race; also fails startup unless `audit.log.multi-tenancy.enabled=true` |
+| `audit-log-server-proto` | `server.proto.v1` | `AuditEventRequest`/`AuditEventResponse`/`AuditRecordProto`/`AuditQueryRequest`/`AuditQueryResponse`/`AuditOutcomeProto` | Generated from `audit_event.proto`; no Spring dependency. **(WP17)** `AuditCursorQueryRequest`/`AuditCursorQueryResponse` for keyset pagination |
+| `audit-log-spring-boot-server` | `server` | `AuditLogServerAutoConfiguration` | Gated by `audit.log.server.enabled` (default `false`, no `matchIfMissing`); registers `ProtobufHttpMessageConverter`. **(WP16)** `@AutoConfigureBefore(AuditLogAutoConfiguration.class)` so its `AuditTenantResolver` wins the `@ConditionalOnMissingBean` race; also fails startup unless `audit.log.multi-tenancy.enabled=true`. **(WP17)** now also explicitly registers `AuditServerExceptionHandler` as a `@Bean` - see "Decisions" #17 |
 | | | `AuditIngestController` | `POST /audit-log/events` -> `AuditLogRecorder`. **(WP16)** tenant comes from `AuditTenantResolver` (the authenticated one), not the wire `tenant_id` - a mismatched body value is rejected (`400`), never silently overridden |
-| | | `AuditQueryController` | `GET /audit-log/records` -> `AuditLogQueryService` |
+| | | `AuditQueryController` | `GET /audit-log/records` -> `AuditLogQueryService`. **(WP17)** also `GET /audit-log/records/after` -> `AuditLogQueryService#findAfter`; `cursorCreatedAt`/`cursorId` must both be supplied together or neither (`400` if only one) |
 | | | `ApiKeyAuthFilter` | **(WP16)** Per-tenant: `X-API-Key` must match one of `audit.log.server.api-keys.<tenantId>`; stashes which tenant as a request attribute for `ApiKeyAuditTenantResolver` to read |
 | | | **`ApiKeyAuditTenantResolver`** | **(WP16)** The `AuditTenantResolver` this module registers - reads the tenant `ApiKeyAuthFilter` authenticated, never a client-suppliable value |
-| | | `AuditServerExceptionHandler` | Maps `IllegalArgumentException`/`IllegalStateException` -> `400` |
-| | | `ProtoMapper` | Wire<->domain type mapping, kept in one place. **(WP15)** maps `tenant_id` both directions. **(WP16)** `toEventRequest` takes the authenticated tenant as an explicit parameter instead of trusting `proto.getTenantId()` |
+| | | `AuditServerExceptionHandler` | Maps `IllegalArgumentException`/`IllegalStateException` -> `400`. **(WP17)** writes directly to `HttpServletResponse` instead of returning a `String` for content-negotiated rendering - the latter silently `500`s for a Protobuf-only `Accept` header, since no converter can render plain text as `application/x-protobuf` |
+| | | `ProtoMapper` | Wire<->domain type mapping, kept in one place. **(WP15)** maps `tenant_id` both directions. **(WP16)** `toEventRequest` takes the authenticated tenant as an explicit parameter instead of trusting `proto.getTenantId()`. **(WP17)** `toCursorQueryResponse` for the new keyset endpoint |
 | | | `AuditLogServerProperties` | **(WP16, breaking)** `apiKey` (single shared secret) replaced entirely by `apiKeys` (`Map<tenantId, secret>`); the old `MultiTenancy.required` nested class is gone - see `MIGRATION.md` |
-| `audit-log-java-client` | `client` | `AuditLogHttpClient` | Thin `RestClient` wrapper; the module a Java consumer of server mode depends on. Unchanged by WP16 - a tenant's key is just whatever secret string it's constructed with |
+| `audit-log-java-client` | `client` | `AuditLogHttpClient` | Thin `RestClient` wrapper; the module a Java consumer of server mode depends on. Unchanged by WP16 - a tenant's key is just whatever secret string it's constructed with. **(WP17)** gained a `RestClient.Builder`-accepting constructor (the 2-arg one now delegates to it), `query(AuditQueryRequest)` (the existing 6-arg overload now delegates to it too), and `queryAfter` |
+| | `client.exception` | `AuditLogClientException` + `Authentication`/`BadRequest`/`Server`/`Connection` subtypes | **(WP17)** Translates `RestClient`'s generic `RestClientResponseException`/`ResourceAccessException` hierarchy into typed exceptions a caller can branch on, via a private `execute()` wrapper |
+| | `client` | `AuditRecordProtos` | **(WP17)** `createdAt(AuditRecordProto)` - parses the raw ISO-8601 wire string back to a `LocalDateTime`; can't be a method on the generated class itself |
+| `audit-log-java-client-spring-boot-starter` | `client.autoconfigure` | `AuditLogClientAutoConfiguration` / `AuditLogClientProperties` | **(WP17, new module)** Gated by `audit.log.client.enabled` (default `false`); registers an `AuditLogHttpClient` bean via its `RestClient.Builder` constructor so `audit.log.client.http.*` timeouts actually take effect. A separate artifact from `audit-log-java-client` so a non-Spring-Boot consumer of the plain client never gets `spring-boot-autoconfigure` forced onto its classpath - the client module itself depends on nothing beyond `spring-web` |
 
 ## Decisions that are load-bearing - do not "simplify" these
 
@@ -241,6 +255,20 @@ one back will reintroduce a real bug. **1-6 are from the v2 pass; 7-13 are new i
     header-based default) required `@AutoConfigureBefore(AuditLogAutoConfiguration.class)` on
     `AuditLogServerAutoConfiguration`, so its `@ConditionalOnMissingBean` `AuditTenantResolver`
     bean registers first.
+17. **`AuditServerExceptionHandler` is registered explicitly as a `@Bean` (WP17), not left to
+    component scanning.** `@RestControllerAdvice` is a scanning stereotype - whether it was ever
+    picked up depended entirely on whether the host application's `@SpringBootApplication` base
+    package happened to cover `io.github.bitaron.auditlog.server`. Every one of this module's own
+    tests before WP17 had a test application that either did (passing by coincidence) or never
+    exercised a caller-error path at all - a real host application's base package essentially never
+    overlaps with this library's, so every `IllegalArgumentException`/`IllegalStateException` the
+    controllers throw silently surfaced as an unhelpful `500` instead of the documented `400`.
+    **Caught empirically** writing `AuditLogHttpClientErrorHandlingTest` (the client exception
+    hierarchy work), whose `ClientTestServerApplication` lives in `io.github.bitaron.auditlog.client`
+    - the first test application in this project whose base package *didn't* happen to overlap.
+    Same fix also had to make the handler write directly to `HttpServletResponse` instead of
+    returning a `String` for Spring MVC's default content-negotiated rendering, which itself fails
+    (uncaught, another silent `500`) for a client sending only `Accept: application/x-protobuf`.
 
 ## Test inventory (what's actually guarded)
 
@@ -287,6 +315,19 @@ one back will reintroduce a real bug. **1-6 are from the v2 pass; 7-13 are new i
 | `AuditLogWriterTest` | A tenant-specific `audit_template` row overrides a same-named global one; a tenant with no override still falls back to the global row; the same `groupName` used by two different tenants creates two distinct `AuditGroup` rows, but is reused within one tenant |
 | `AuditLogAutoConfigurationTest` | `audit.log.tenant-templates.<tenantId>.<name>` overrides the tenant-agnostic `audit.log.templates.<name>` property for that tenant only |
 | `AuditLogRetentionServiceTest` | A tenant with a `retention.tenant-max-age` override is purged to its own cutoff while another tenant (and the no-tenant case) keeps following the global `retention.max-age` |
+
+### WP17
+
+| Test | Guards |
+|---|---|
+| `AuditQueryServiceTest`/query tests | `AuditRecord.toCursor()` produces pages identical to manually-constructed `AuditCursor`s |
+| `AuditLogAssertionsTest` | The published `testsupport.AuditLogAssertions` helper itself - `awaitRecord`/`awaitRecords` correctly poll for `ASYNC`-delivered writes |
+| `AuditLogTestControllerIntegrationTest` (demo app) | Rewritten to use `AuditLogAssertions` instead of raw `EntityManager`/JPQL, dogfooding the published helper |
+| `AuditLogHttpClientTest` | `query(AuditQueryRequest)` (multi-filter: actor + type + created-at range combined); `queryAfter` keyset pagination through the real client |
+| `AuditLogHttpClientErrorHandlingTest` | Each typed `AuditLogClientException` subtype is thrown for the right HTTP status; surfaced and drove the fix for "Decisions" #17 |
+| `AuditLogHttpClientMultiTenancyTest` | A client holding one tenant's key never sees another tenant's records via `query()` or `queryAfter()` - the client-side half of `AuditLogServerMultiTenancyIntegrationTest`'s guarantee |
+| `AuditLogClientAutoConfigurationTest` | No `AuditLogHttpClient` bean by default; startup fails with `enabled=true` and no `base-url`; registers the bean (with configured timeouts applied) once both are set |
+| `AuditLogServerIntegrationTest`/`AuditQueryController` tests | `GET /audit-log/records/after` keyset-paginates the same way `AuditLogQueryService#findAfter` does in-process; a half-supplied cursor (`cursorCreatedAt` XOR `cursorId`) is rejected as `400` |
 
 ## Not done (deliberately)
 
