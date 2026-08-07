@@ -1,10 +1,14 @@
-# Generating a client for the audit-log REST server
+# Generating a client for the audit-log REST/gRPC servers
 
-The audit-log REST server (`audit-log-spring-boot-server`) speaks Protobuf on the wire - see
+The audit-log REST server (`audit-log-spring-boot-server`) speaks Protobuf on the wire, and the
+audit-log gRPC server (`audit-log-spring-boot-grpc-server`, WP18) speaks gRPC using the exact same
+messages - both are defined in
 `audit_log/audit-log-server-proto/src/main/proto/auditlog/v1/audit_event.proto`, the single source
-of truth for the wire format. That file is plain, language-agnostic Protocol Buffers IDL, so any
-language `protoc` supports can generate a typed client directly from it - you are not limited to
-Java, and you don't need this repository's build to do it.
+of truth for the wire format (messages *and*, as of WP18, the `AuditLogService` RPC definitions).
+That file is plain, language-agnostic Protocol Buffers IDL, so any language `protoc` supports can
+generate a typed client directly from it - you are not limited to Java, and you don't need this
+repository's build to do it. This document covers REST first (most of it, since that's the more
+established path), then gRPC.
 
 ## Java: use the pre-built module
 
@@ -78,6 +82,59 @@ The rest of this document is for every other language.
    the `X-API-Key` header for whichever tenant you're calling as
    (`audit.log.server.api-keys.<tenantId>`) - which tenant a request acts as is determined by
    which key it presents, not by anything the client sends elsewhere.
+
+## gRPC clients
+
+The same `audit_event.proto` file also declares `service AuditLogService` (`Ingest`/`Query`/
+`QueryAfter`) for talking to `audit-log-spring-boot-grpc-server` instead of the REST server -
+reusing every message type above unchanged, so everything in "Schema compatibility rules" below
+applies equally to the service definition.
+
+- **Java**: `audit-log-server-proto` already contains the generated `AuditLogServiceGrpc` stub (a
+  second `protoc` pass, via the `grpc-java` plugin) alongside the plain message classes - no
+  separate module or extra codegen step needed:
+
+  ```xml
+  <dependency>
+      <groupId>io.github.bitaron</groupId>
+      <artifactId>audit-log-server-proto</artifactId>
+      <version>2.0.0-SNAPSHOT</version>
+  </dependency>
+  <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-netty-shaded</artifactId>
+      <version>1.68.2</version>
+  </dependency>
+  ```
+
+  ```java
+  ManagedChannel channel = ManagedChannelBuilder.forAddress("audit.example.com", 9090).build();
+  Metadata metadata = new Metadata();
+  metadata.put(Metadata.Key.of("x-api-key", Metadata.ASCII_STRING_MARSHALLER), apiKey);
+  AuditLogServiceGrpc.AuditLogServiceBlockingStub stub = AuditLogServiceGrpc.newBlockingStub(channel)
+          .withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
+  stub.ingest(AuditEventRequest.newBuilder().setAuditType("payment.captured").build());
+  ```
+
+  There's no dedicated wrapper module (the gRPC equivalent of `audit-log-java-client`) yet - see
+  `audit-log-spring-boot-grpc-server/README.md`'s "Client options" for the current state.
+
+- **Any other language**: get the `.proto` file the same way as the REST section above, then run
+  `protoc` with your language's gRPC plugin in addition to its message plugin, e.g.:
+
+  ```bash
+  # Python (requires grpcio-tools: pip install grpcio-tools)
+  python -m grpc_tools.protoc --python_out=. --pyi_out=. --grpc_python_out=. \
+      -I. auditlog/v1/audit_event.proto
+
+  # Go (requires protoc-gen-go-grpc: go install google.golang.org/grpc/cmd/protoc-gen-go-grpc)
+  protoc --go_out=. --go-grpc_out=. --go_opt=paths=source_relative \
+      --go-grpc_opt=paths=source_relative auditlog/v1/audit_event.proto
+  ```
+
+  Every RPC authenticates the same way REST does: present the tenant's API key, but as an
+  `x-api-key` gRPC metadata entry (not an HTTP header) - which tenant a call acts as is determined
+  by which key it presents, same rule as REST's `X-API-Key`.
 
 ## Why this works reliably: schema compatibility rules
 

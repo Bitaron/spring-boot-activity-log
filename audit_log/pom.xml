@@ -31,16 +31,41 @@
         <module>audit-log-spring-boot-starter</module>
         <module>audit-log-server-proto</module>
         <module>audit-log-spring-boot-server</module>
+        <module>audit-log-spring-boot-grpc-server</module>
         <module>audit-log-java-client</module>
         <module>audit-log-java-client-spring-boot-starter</module>
     </modules>
 
     <!-- Single source of truth for protobuf-java's version - shared by audit-log-server-proto
-         (generated stubs) and audit-log-spring-boot-server (protobuf-java-util, for
-         ProtobufHttpMessageConverter's JSON support), which must always agree. -->
+         (generated stubs), audit-log-spring-boot-server (protobuf-java-util, for
+         ProtobufHttpMessageConverter's JSON support), and audit-log-spring-boot-grpc-server
+         (WP18 - grpc-java's own protobuf-java dependency must agree with this too, hence the
+         explicit override in dependencyManagement below rather than trusting grpc-bom's pick). -->
     <properties>
         <protobuf.version>3.25.5</protobuf.version>
+        <grpc.version>1.68.2</grpc.version>
     </properties>
+
+    <!-- WP18: single source of truth for grpc-java artifact versions (grpc-stub, grpc-protobuf,
+         grpc-netty-shaded, ...) across audit-log-server-proto and audit-log-spring-boot-grpc-server. -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>io.grpc</groupId>
+                <artifactId>grpc-bom</artifactId>
+                <version>${grpc.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- Explicit override, ahead of whatever grpc-bom pulls transitively - keeps every
+                 module's protobuf-java at the exact version protoc generated code against. -->
+            <dependency>
+                <groupId>com.google.protobuf</groupId>
+                <artifactId>protobuf-java</artifactId>
+                <version>${protobuf.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <licenses>
         <license>

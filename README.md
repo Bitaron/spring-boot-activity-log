@@ -26,8 +26,8 @@ That's it - every invocation of an `@Audit`-annotated method now produces one `a
 (`outcome`, `duration_ms`, actor/client fields, and any rendered `templates`), dispatched
 asynchronously and deferred until the caller's transaction commits by default. See the
 [full usage guide](audit_log/audit-log-spring-boot-autoconfigure/README.md) for actor resolution,
-delivery-mode control, reading records back, retention, and the optional REST server for non-JVM
-callers.
+delivery-mode control, reading records back, retention, and the optional REST/gRPC servers for
+non-JVM callers.
 
 ## Build
 
@@ -94,14 +94,21 @@ curl smoke test, and running more than one tenant.
   applications should actually depend on (pulls in the autoconfigure module plus
   `spring-boot-starter-aop`).
 - **`audit_log/audit-log-server-proto`** - the Protobuf (`.proto`) wire schema and generated Java
-  stubs for the REST server module below, with no Spring dependency of its own. See
-  [`docs/CLIENT_CODEGEN.md`](docs/CLIENT_CODEGEN.md) to generate a client in any language directly
-  from the schema.
+  stubs (Protobuf messages plus, as of WP18, a gRPC service) for the REST and gRPC server modules
+  below, with no Spring dependency of its own. See [`docs/CLIENT_CODEGEN.md`](docs/CLIENT_CODEGEN.md)
+  to generate a client in any language directly from the schema.
 - **`audit_log/audit-log-spring-boot-server`** - an optional REST ingestion/query server
   (`POST /audit-log/events`, `GET /audit-log/records`) for callers with no `@Audit`-annotated
   method invocation to intercept. Off by default - see `audit.log.server.*` properties in
   [`MIGRATION.md`](MIGRATION.md).
-- **`audit_log/audit-log-java-client`** - a typed Java HTTP client for the server module above.
+- **`audit_log/audit-log-spring-boot-grpc-server`** - the gRPC equivalent (WP18), same three
+  operations on the same wire messages, for callers that prefer gRPC over REST. Off by default -
+  see [its README](audit_log/audit-log-spring-boot-grpc-server/README.md) and `audit.log.grpc.*`
+  properties in [`MIGRATION.md`](MIGRATION.md). Cannot be enabled in the same application as
+  `audit-log-spring-boot-server`.
+- **`audit_log/audit-log-java-client`** - a typed Java HTTP client for the REST server module
+  above, and **`audit_log/audit-log-java-client-spring-boot-starter`** - its optional Spring Boot
+  auto-config, registering an `AuditLogHttpClient` bean from `audit.log.client.*` properties.
 - **`audit_log_usage_example`** - a minimal Spring Boot app wiring the starter in, used both as a
   runnable demo and as an integration test target (`mvn test` in that module).
 - **`audit_log_standalone_server`** - the runnable standalone deployment of

@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.bitaron</groupId>
+        <artifactId>audit-log</artifactId>
+        <version>2.0.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>audit-log-spring-boot-grpc-server</artifactId>
+    <name>${project.groupId}:${project.artifactId}</name>
+    <packaging>jar</packaging>
+    <description>Optional gRPC ingestion/query server for the audit-log starter (WP18) - the same wire format and RPCs as audit-log-spring-boot-server's REST endpoints, on the AuditLogService gRPC service defined in audit_event.proto, for callers that prefer gRPC over REST. Off by default (audit.log.grpc.enabled=false) - depend on this module and opt in explicitly. Cannot be enabled in the same application as audit-log-spring-boot-server - see AuditLogGrpcServerAutoConfiguration's javadoc.</description>
+    <url>https://github.com/Bitaron/spring-boot-activity-log</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>Bitaron</id>
+            <name>Sk. Kamruzzaman</name>
+            <email>bitaron90@gmail.com</email>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:git://github.com/Bitaron/spring-boot-activity-log</connection>
+        <developerConnection>scm:git:ssh://github.com:Bitaron/spring-boot-activity-log.git</developerConnection>
+        <url>https://github.com/Bitaron/spring-boot-activity-log</url>
+    </scm>
+
+    <distributionManagement>
+        <snapshotRepository>
+            <id>ossrh</id>
+            <url>https://s01.oss.sonatype.org/content/repositories/snapshots</url>
+        </snapshotRepository>
+        <repository>
+            <id>ossrh</id>
+            <url>https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/</url>
+        </repository>
+    </distributionManagement>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.github.bitaron</groupId>
+            <artifactId>audit-log-server-proto</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!--
+            The actual gRPC server transport. Shaded (relocated Netty classes under
+            io.grpc.netty.shaded.io.netty) specifically to avoid colliding with whatever Netty
+            version a host application already has on its classpath (e.g. via Reactor Netty /
+            spring-boot-starter-webflux) - the same category of classpath-collision care this
+            project already takes with protobuf-java-util (see audit-log-spring-boot-server's pom
+            comment). audit-log-server-proto brings grpc-stub/grpc-protobuf transitively (needed to
+            compile/use the generated AuditLogServiceGrpc classes at all); this is the one grpc
+            artifact only a real server needs, so it stays out of that lighter, stub-only module.
+        -->
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-netty-shaded</artifactId>
+        </dependency>
+        <!--
+            The starter, not audit-log-spring-boot-autoconfigure directly - identical rationale to
+            audit-log-spring-boot-server's pom comment: AuditLogAutoConfiguration always attempts to
+            register an AuditLogAspect bean, whose class references AspectJ types at the bytecode
+            level; loading it without spring-boot-starter-aop actually on the classpath throws
+            NoClassDefFoundError, not a graceful skip. The starter already supplies it as a real
+            dependency.
+        -->
+        <dependency>
+            <groupId>io.github.bitaron</groupId>
+            <artifactId>audit-log-spring-boot-starter</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+        <!--
+            "provided" in audit-log-spring-boot-autoconfigure's own pom (see its comment on why),
+            so it doesn't flow transitively through the starter - needed directly here for
+            AuditLogGrpcService's Page/Pageable/PageRequest usage, same as the REST server module.
+        -->
+        <dependency>
+            <groupId>org.springframework.data</groupId>
+            <artifactId>spring-data-commons</artifactId>
+        </dependency>
+        <!--
+            "provided" in audit-log-spring-boot-autoconfigure's own pom (so it doesn't flow
+            transitively through the starter to every consumer unasked), but a *real* (compile
+            scope, not provided) dependency here - deliberately different from the
+            spring-data-commons dependency just above. Reason: AuditLogAutoConfiguration
+            unconditionally registers a DefaultAuditContextResolver bean (the actor-identity
+            default, unrelated to this module's tenant resolution), and that class has a hard
+            compile-time reference to HttpServletRequest - Spring's bean post-processing fails to
+            even introspect the class without jakarta.servlet-api on the classpath, regardless of
+            whether anything servlet-y ever actually runs. Unlike the REST server module (which
+            gets this transitively via spring-boot-starter-web), a pure-gRPC deployment has no
+            other reason to pull in the Servlet API, so this module supplies it directly and lets
+            it flow to host applications - they shouldn't have to know this gotcha exists.
+        -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.46</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.15.0</version>
+                <configuration>
+                    <parameters>true</parameters>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <goals>
+                            <goal>jar-no-fork</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.8.0</version>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.7</version>
+                        <configuration>
+                            <keyname>08D54EE8</keyname>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.7.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
+</project>

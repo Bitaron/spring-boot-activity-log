@@ -10,20 +10,23 @@ starting point; this file is denser and optimized for an agent about to make a c
 
 A Spring Boot starter (`audit-log`) that records audit trail entries for `@Audit`-annotated
 methods via AspectJ, rendering messages from pluggable-source (properties or database) FreeMarker
-templates. It also ships an optional REST server/client pair (Protobuf wire format) for callers
-with no in-process method invocation for AOP to intercept - a remote service, a non-JVM caller.
-Package root: `io.github.bitaron.auditlog` (all-lowercase, deliberately - see "Conventions" #13).
+templates. It also ships an optional REST server/client pair (Protobuf wire format) and an optional
+gRPC server (WP18, same wire messages, same `AuditLogService` proto now also defining RPCs) for
+callers with no in-process method invocation for AOP to intercept - a remote service, a non-JVM
+caller. Package root: `io.github.bitaron.auditlog` (all-lowercase, deliberately - see
+"Conventions" #13).
 
 ## Module map
 
 ```
 pom.xml                                        aggregator, version 2.0.0-SNAPSHOT
 audit_log/
-  pom.xml                                      parent for the 6 modules below
+  pom.xml                                      parent for the 7 modules below
   audit-log-spring-boot-autoconfigure/         ALL core implementation + tests + README
   audit-log-spring-boot-starter/               pom-only; what consumers of the core library depend on
-  audit-log-server-proto/                       .proto IDL + generated Java stubs, no Spring dependency
+  audit-log-server-proto/                       .proto IDL + generated Java stubs (Protobuf + gRPC), no Spring dependency
   audit-log-spring-boot-server/                 optional REST ingestion/query server, off by default
+  audit-log-spring-boot-grpc-server/            (WP18) optional gRPC ingestion/query server, off by default
   audit-log-java-client/                        typed Java HTTP client for the server module, no Spring dependency
   audit-log-java-client-spring-boot-starter/    (WP17) opt-in Spring Boot auto-config for the client above
 audit_log_usage_example/                        runnable demo app + integration test
@@ -37,11 +40,13 @@ db/migration/V4__audit_log_tenant_scoped_templates_groups.sql   tenant-scopes au
 ```
 
 Dependency direction: `starter` -> `autoconfigure`. `server` -> `starter` (not `autoconfigure`
-directly - see "Conventions" #12) + `server-proto`. `java-client` -> `server-proto` only.
+directly - see "Conventions" #12) + `server-proto`. `grpc-server` -> `starter` (same rationale as
+`server`) + `server-proto` (WP18). `java-client` -> `server-proto` only.
 `java-client-spring-boot-starter` -> `java-client` (a separate artifact specifically so a
 non-Spring-Boot consumer of the plain client never gets `spring-boot-autoconfigure` forced onto its
 classpath - see "Conventions" #17). The demo app -> `starter`. The standalone-server app ->
-`audit-log-spring-boot-server`. Never add a dependency that points the other way.
+`audit-log-spring-boot-server`. `server` and `grpc-server` are never both depended on/enabled by the
+same application - see "Conventions" #18. Never add a dependency that points the other way.
 
 ## Package/class map
 
@@ -70,20 +75,26 @@ classpath - see "Conventions" #17). The demo app -> `starter`. The standalone-se
 | `properties` | `AuditLogProperties` | `@ConfigurationProperties("audit.log")`, nested `Headers`/`Executor`/`SchemaValidation`/`Query`/`Retention`/`MultiTenancy`; `Retention.tenantMaxAge` and a top-level `tenantTemplates` map are WP16 additions |
 | `testsupport` (test-jar) | `AuditLogAssertions` | **(WP17)** Published as this module's `tests` classifier - `awaitRecord`/`awaitRecords` (poll `AuditLogQueryService` for `ASYNC`-delivered writes), `messagesFor`, `clearAuditLog`. Lets a consuming application's own tests assert through the documented read API instead of raw `EntityManager`/JPQL - see "Testing patterns" |
 
-### Server/client (`audit-log-server-proto`, `audit-log-spring-boot-server`, `audit-log-java-client`, `audit-log-java-client-spring-boot-starter`)
+### Server/client (`audit-log-server-proto`, `audit-log-spring-boot-server`, `audit-log-spring-boot-grpc-server`, `audit-log-java-client`, `audit-log-java-client-spring-boot-starter`)
 
 | Module | Key classes | Role |
 |---|---|---|
-| `audit-log-server-proto` | Generated from `audit_event.proto` | `AuditEventRequest`/`Response`, `AuditRecordProto`, `AuditQueryRequest`/`Response`, `AuditOutcomeProto`. **(WP17)** `AuditCursorQueryRequest`/`Response` for keyset pagination over the wire |
-| `audit-log-spring-boot-server` | `AuditLogServerAutoConfiguration` | Gated by `audit.log.server.enabled` (default `false`); also requires `audit.log.multi-tenancy.enabled=true` (WP16). **(WP17)** now explicitly registers `AuditServerExceptionHandler` as a `@Bean` - see "Conventions" #17 |
+| `audit-log-server-proto` | Generated from `audit_event.proto` | `AuditEventRequest`/`Response`, `AuditRecordProto`, `AuditQueryRequest`/`Response`, `AuditOutcomeProto`. **(WP17)** `AuditCursorQueryRequest`/`Response` for keyset pagination over the wire. **(WP18)** the same `.proto` file now also declares `service AuditLogService` (`Ingest`/`Query`/`QueryAfter`), so a second `protoc` codegen pass (`pluginId=grpc-java`) also produces `AuditLogServiceGrpc` (stub + `ImplBase`) alongside the plain message classes |
+| `audit-log-spring-boot-server` | `AuditLogServerAutoConfiguration` | Gated by `audit.log.server.enabled` (default `false`); also requires `audit.log.multi-tenancy.enabled=true` (WP16). **(WP17)** now explicitly registers `AuditServerExceptionHandler` as a `@Bean` - see "Conventions" #17. **(WP18)** also fails startup if `audit.log.grpc.enabled=true` - see "Conventions" #18 |
 | | `AuditIngestController` / `AuditQueryController` | `POST /audit-log/events`, `GET /audit-log/records`. **(WP17)** `AuditQueryController` also serves `GET /audit-log/records/after` (keyset pagination, mirrors `AuditLogQueryService#findAfter`) |
 | | `ApiKeyAuthFilter` | Per-tenant (WP16): `X-API-Key` must match one of `audit.log.server.api-keys.<tenantId>`; resolves *which* tenant, not just whether the request is allowed |
 | | `ApiKeyAuditTenantResolver` | WP16: the `AuditTenantResolver` this module registers - reads the tenant `ApiKeyAuthFilter` authenticated, not a client-suppliable header |
 | | `ProtoMapper` | Wire<->domain mapping, one place |
+| `audit-log-spring-boot-grpc-server` | `AuditLogGrpcServerAutoConfiguration` | **(WP18, new module)** Gated by `audit.log.grpc.enabled` (default `false`); also requires `audit.log.multi-tenancy.enabled=true` (same reasoning as the REST server module) and fails startup if `audit.log.server.enabled=true` - see "Conventions" #18 |
+| | `AuditLogGrpcService` | `extends AuditLogServiceGrpc.AuditLogServiceImplBase` - implements `Ingest`/`Query`/`QueryAfter` on top of the same `AuditLogRecorder`/`AuditLogQueryService` beans; gRPC-`Status`-coded errors (`INVALID_ARGUMENT`/`INTERNAL`), mirroring `AuditServerExceptionHandler`'s REST-side error mapping |
+| | `ApiKeyGrpcServerInterceptor` | `ServerInterceptor` reading the `x-api-key` gRPC metadata entry, resolving it against `audit.log.grpc.api-keys.<tenantId>`, and setting the authenticated tenant into a `io.grpc.Context` value - the gRPC-transport equivalent of `ApiKeyAuthFilter` |
+| | `GrpcAuditTenantResolver` | The `AuditTenantResolver` this module registers - reads the tenant `ApiKeyGrpcServerInterceptor` put into `Context`, not a client-suppliable field |
+| | `GrpcProtoMapper` | Wire<->domain mapping - a deliberate duplicate of `audit-log-spring-boot-server`'s `ProtoMapper` (not a shared dependency), documented in its own class javadoc, to avoid forcing Servlet/MVC types onto grpc-only deployments or vice versa |
+| | `AuditLogGrpcServer` | Owns the `io.grpc.Server` lifecycle (`InitializingBean`/`DisposableBean`, same hand-rolled pattern as `AuditLogRetentionService`/`AuditLogTaskExecutor`), not `@Scheduled`/a `grpc-spring-boot-starter` dependency |
 | `audit-log-java-client` | `AuditLogHttpClient` | Thin `RestClient` wrapper, no Spring Boot dependency - see its own README. **(WP17)** gained a `RestClient.Builder`-accepting constructor (the seam the starter module below injects a Boot-managed, timeout-configured builder through), `query(AuditQueryRequest)` (the existing 6-arg overload now delegates to it), and `queryAfter` for keyset pagination |
 | | `exception.AuditLogClientException` + 4 subtypes | **(WP17)** `Authentication`/`BadRequest`/`Server`/`Connection` - translates `RestClient`'s generic response exceptions into typed ones a caller can actually branch on |
 | | `AuditRecordProtos` | **(WP17)** `createdAt(AuditRecordProto)` - parses the raw ISO-8601 wire string back to a `LocalDateTime`, since the generated proto class can't be hand-edited to add the method itself |
-| `audit-log-java-client-spring-boot-starter` | `AuditLogClientAutoConfiguration` | **(WP17, new module)** Gated by `audit.log.client.enabled` (default `false`); registers an `AuditLogHttpClient` bean from `audit.log.client.base-url`/`api-key`/`http.connect-timeout`/`http.read-timeout` |
+| `audit-log-java-client-spring-boot-starter` | `AuditLogClientAutoConfiguration` | **(WP17, new module)** Gated by `audit.log.client.enabled` (default `false`); registers an `AuditLogHttpClient` bean from `audit.log.client.base-url`/`api-key`/`http.connect-timeout`/`http.read-timeout`. No gRPC equivalent client module yet - see `audit-log-spring-boot-grpc-server/README.md`'s "Client options" |
 | `audit_log_standalone_server` | `AuditLogServerApplication` | Runnable standalone deployment of the REST server - H2 by default, `postgres` profile available; requires at least one `audit.log.server.api-keys.<tenantId>` entry supplied externally at startup (see "Build & test") |
 
 ## Build & test
@@ -103,6 +114,10 @@ mvn -f audit_log/pom.xml clean deploy -P release                   # actual publ
 
 mvn -pl audit_log/audit-log-spring-boot-autoconfigure test        # core module only
 mvn -pl audit_log/audit-log-spring-boot-server test                # REST server module only
+mvn -pl audit_log/audit-log-spring-boot-grpc-server test           # gRPC server module only (WP18;
+                                                                     # starts a real gRPC server at an
+                                                                     # ephemeral port, audit.log.grpc.port=0,
+                                                                     # to test against)
 mvn -pl audit_log/audit-log-java-client test                       # client module only (starts a
                                                                      # real embedded server at a
                                                                      # random port to test against)
@@ -155,9 +170,13 @@ on first build - needs outbound access to Maven Central or a mirror.
 | `audit.log.client.base-url` | *(required if enabled)* | The REST server module's base URL |
 | `audit.log.client.api-key` | - | The value configured as one of `audit.log.server.api-keys.<tenantId>` on the server - determines which tenant this client acts as |
 | `audit.log.client.http.connect-timeout` / `read-timeout` | `5s` / `30s` | Timeouts for every request this client makes |
+| `audit.log.grpc.enabled` | `false` | **(WP18)** Master switch for the gRPC server module; requires `audit.log.multi-tenancy.enabled=true` and cannot coexist with `audit.log.server.enabled=true` in the same application - see "Conventions" #18 |
+| `audit.log.grpc.port` | `9090` | Port the gRPC server listens on; `0` binds an OS-assigned ephemeral port (used by this module's own tests) |
+| `audit.log.grpc.api-keys.<tenantId>` | *(at least one required if enabled)* | Per-tenant API key, presented via the `x-api-key` gRPC metadata entry - same authentication model as `audit.log.server.api-keys.<tenantId>`, own separate namespace |
 
 Full property javadoc lives on `AuditLogProperties`/`AuditLogServerProperties`/
-`AuditLogClientProperties` themselves - this table is for discovery, not the last word on behavior.
+`AuditLogClientProperties`/`AuditLogGrpcServerProperties` themselves - this table is for discovery,
+not the last word on behavior.
 
 ## Conventions and load-bearing decisions - do not "simplify" these
 
@@ -254,6 +273,18 @@ here for fast lookup.
     controllers throw silently surfaced as an unhelpful `500` instead of the documented `400`.
     Caught empirically - explicit `@Bean` registration is required for every stereotype-annotated
     class this starter ships, not just the ones already written that way.
+18. **`audit-log-spring-boot-server` (REST) and `audit-log-spring-boot-grpc-server` (gRPC, WP18)
+    fail startup loudly if both are enabled in the same application**, rather than silently letting
+    one win. Each authenticates its per-tenant API keys into a different, non-interoperable
+    request-scoped context - an `HttpServletRequest` attribute for REST
+    (`ApiKeyAuditTenantResolver`), a gRPC `Context` value for gRPC (`GrpcAuditTenantResolver`) - and
+    only one `AuditTenantResolver` bean can be active application-wide. Whichever module's
+    `@AutoConfigureBefore(AuditLogAutoConfiguration.class)` autoconfiguration processes first would
+    silently win the `@ConditionalOnMissingBean` race for that bean, leaving the other protocol's
+    calls resolving no tenant at all - an order-dependent latent bug rather than an obvious failure.
+    Each module's own `Environment.getProperty("audit.log.<other>.enabled", Boolean.class, false)`
+    check (no compile dependency between the two sibling optional modules) catches this at startup
+    instead. Deploy REST and gRPC as separate application instances if you need both protocols.
 
 ## Testing patterns
 
@@ -283,6 +314,13 @@ here for fast lookup.
   cross-tenant-isolation cases into their own `AuditLogServerMultiTenancyIntegrationTest` class,
   since it needs more than one configured tenant while `AuditLogServerIntegrationTest` deliberately
   keeps testing the single-tenant case.
+- **`@SpringBootTest` + a real `ManagedChannel` at an ephemeral port** (WP18,
+  `AuditLogGrpcServerIntegrationTest`/`AuditLogGrpcServerMultiTenancyIntegrationTest`) is the gRPC
+  equivalent - `audit.log.grpc.port=0` so `AuditLogGrpcServer.getPort()` returns the real OS-assigned
+  port to build the channel against, `io.grpc.stub.MetadataUtils.newAttachHeadersInterceptor` to
+  attach the `x-api-key` metadata entry per call, and asserting on
+  `StatusRuntimeException.getStatus().getCode()` rather than an HTTP status code. Same
+  single-tenant/multi-tenant test-class split as the REST module, for the same reason.
 
 ## Where to go deeper
 
@@ -292,16 +330,18 @@ here for fast lookup.
 - [`docs/SCALING.md`](docs/SCALING.md) - large-data operation: offset vs. keyset pagination, the
   Hibernate `IDENTITY`-batching limitation (and why there's no runtime property to switch it),
   retention, table partitioning.
-- [`docs/CLIENT_CODEGEN.md`](docs/CLIENT_CODEGEN.md) - generating a client for the REST server in
-  any language directly from `audit_event.proto`, plus the schema compatibility rules to follow
-  when changing it.
+- [`docs/CLIENT_CODEGEN.md`](docs/CLIENT_CODEGEN.md) - generating a client for the REST server (or,
+  as of WP18, a gRPC client via the `grpc-java` `protoc` plugin) in any language directly from
+  `audit_event.proto`, plus the schema compatibility rules to follow when changing it.
 - [`HANDOFF.md`](HANDOFF.md) - narrative record of what was built, in what order, and why, across
   both the v2 redesign and the v3 (server mode/scale) pass. Read this if you want the *history*
   behind a decision, not just the decision itself.
 - Each module's own `README.md` (`audit_log/audit-log-spring-boot-autoconfigure/README.md` is the
   primary one - usage examples, extension points, the actor-identity trust model;
   `audit_log/audit-log-spring-boot-server/README.md` covers the REST endpoints and per-tenant
-  authentication specifically; `audit_log/audit-log-java-client/README.md` and
+  authentication specifically; `audit_log/audit-log-spring-boot-grpc-server/README.md` (WP18)
+  covers the equivalent gRPC RPCs, and the REST/gRPC mutual-exclusion constraint, specifically;
+  `audit_log/audit-log-java-client/README.md` and
   `audit_log/audit-log-java-client-spring-boot-starter/README.md` (WP17) cover the typed HTTP
   client and its optional Boot auto-config).
 

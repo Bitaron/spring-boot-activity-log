@@ -15,6 +15,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.Ordered;
+import org.springframework.core.env.Environment;
 import org.springframework.http.converter.protobuf.ProtobufHttpMessageConverter;
 import org.springframework.web.servlet.DispatcherServlet;
 
@@ -40,6 +41,10 @@ import java.util.Map;
  * rather than hand-writing (de)serialization - Spring Boot's auto-configured
  * {@code RequestMappingHandlerAdapter} picks up any {@code HttpMessageConverter} bean in the
  * context automatically.
+ * <p>
+ * <b>Cannot coexist with the gRPC server module (WP18) in the same application</b> - see
+ * {@link #auditLogServerApiKeyFilter}'s fail-fast check and
+ * {@code AuditLogGrpcServerAutoConfiguration}'s javadoc for why.
  */
 @AutoConfiguration
 @AutoConfigureBefore(AuditLogAutoConfiguration.class)
@@ -100,15 +105,19 @@ public class AuditLogServerAutoConfiguration {
     }
 
     /**
-     * Fails startup rather than running unauthenticated/unscoped when this module is enabled with
-     * no per-tenant keys configured, or with the core starter's tenant-scoped read enforcement
-     * turned off. The latter check exists because per-tenant API keys only actually confine each
-     * tenant to its own data once {@code audit.log.multi-tenancy.enabled=true} makes
-     * {@code JpaAuditLogQueryService} apply the resolved tenant to every read - without it, every
-     * key would authenticate a distinct tenant identity that nothing then scopes reads by.
+     * Fails startup rather than running unauthenticated/unscoped/conflicting when this module is
+     * enabled with: no per-tenant keys configured; the core starter's tenant-scoped read
+     * enforcement turned off (per-tenant API keys only actually confine each tenant to its own
+     * data once {@code audit.log.multi-tenancy.enabled=true} makes {@code JpaAuditLogQueryService}
+     * apply the resolved tenant to every read - without it, every key would authenticate a
+     * distinct tenant identity that nothing then scopes reads by); or the gRPC server module
+     * (WP18, {@code audit-log-spring-boot-grpc-server}) also enabled in the same application - see
+     * {@code AuditLogGrpcServerAutoConfiguration}'s javadoc for why the two cannot coexist.
      *
      * @param properties       this module's configuration, in particular the per-tenant API keys
      * @param auditLogProperties the core starter's configuration, to verify multi-tenancy is on
+     * @param environment      checked for {@code audit.log.grpc.enabled} without requiring a
+     *                         compile dependency on the gRPC server module's properties class
      * @return the registered {@link ApiKeyAuthFilter}, covering every path under this module,
      * ordered ahead of every other filter so an unauthenticated request never reaches
      * {@link DispatcherServlet} at all
@@ -116,7 +125,8 @@ public class AuditLogServerAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public FilterRegistrationBean<Filter> auditLogServerApiKeyFilter(AuditLogServerProperties properties,
-                                                                       AuditLogProperties auditLogProperties) {
+                                                                       AuditLogProperties auditLogProperties,
+                                                                       Environment environment) {
         if (properties.getApiKeys().isEmpty()) {
             throw new IllegalStateException(
                     "audit.log.server.enabled=true requires at least one audit.log.server.api-keys.<tenantId> "
@@ -128,6 +138,15 @@ public class AuditLogServerAutoConfiguration {
                             + "API keys only actually confine each tenant to its own data once the core starter's "
                             + "tenant-scoped read enforcement is turned on; otherwise every key would authenticate "
                             + "a tenant identity that nothing then scopes reads by");
+        }
+        if (environment.getProperty("audit.log.grpc.enabled", Boolean.class, false)) {
+            throw new IllegalStateException(
+                    "audit.log.server.enabled=true and audit.log.grpc.enabled=true cannot both be true in the "
+                            + "same application: each authenticates tenants into a different request-scoped "
+                            + "context (an HttpServletRequest attribute vs. a gRPC Context value) and only one "
+                            + "AuditTenantResolver bean can be active application-wide, so combining them would "
+                            + "silently misroute one protocol's tenant resolution. Run REST and gRPC as separate "
+                            + "deployed instances instead.");
         }
         FilterRegistrationBean<Filter> registration =
                 new FilterRegistrationBean<>(new ApiKeyAuthFilter(invert(properties.getApiKeys())));

@@ -128,3 +128,22 @@ message AuditCursorQueryRequest {
 message AuditCursorQueryResponse {
   repeated AuditRecordProto records = 1;
 }
+
+// gRPC equivalent of the REST server's three endpoints (WP18), reusing every message above
+// unchanged - unlike REST, a gRPC RPC always has one typed request message, so AuditQueryRequest/
+// AuditCursorQueryRequest (originally just documentation of the REST query-parameter shape, per
+// their own comments above) are the literal wire request here, not merely a typed description of
+// one. Same authentication model as the REST server: a per-tenant API key presented via the
+// "x-api-key" metadata entry (see audit-log-spring-boot-grpc-server's ApiKeyGrpcServerInterceptor)
+// - never a caller-suppliable tenant_id/tenant field on any of these messages, for the identical
+// reason AuditQueryRequest/AuditCursorQueryRequest already document.
+service AuditLogService {
+  // Mirrors POST /audit-log/events. The persisted tenant is always the one the API key
+  // authenticated - a request naming a different tenant_id is rejected (INVALID_ARGUMENT), not
+  // silently overridden. See AuditIngestController's javadoc for the identical REST-side rule.
+  rpc Ingest(AuditEventRequest) returns (AuditEventResponse);
+  // Mirrors GET /audit-log/records.
+  rpc Query(AuditQueryRequest) returns (AuditQueryResponse);
+  // Mirrors GET /audit-log/records/after - keyset ("seek") pagination, see docs/SCALING.md.
+  rpc QueryAfter(AuditCursorQueryRequest) returns (AuditCursorQueryResponse);
+}
