@@ -101,6 +101,15 @@ public class AuditLogProperties {
     private Map<String, String> templates = new HashMap<>();
 
     /**
+     * Per-tenant template overrides (WP16), keyed by tenant id then template name - e.g.
+     * {@code audit.log.tenant-templates.acme-corp.login-attempt=Login by ${actorName!"unknown"} (Acme)}.
+     * Tried before the tenant-agnostic {@link #templates} map for a matching tenant, so a tenant
+     * can override a shared default without every other tenant needing its own copy. Ignored
+     * entirely when the current tenant is {@code null} (multi-tenancy disabled/unresolved).
+     */
+    private Map<String, Map<String, String>> tenantTemplates = new HashMap<>();
+
+    /**
      * When {@code true}, a {@code @Audit(templates = ...)} name that no configured
      * {@code AuditTemplateSource} can resolve fails application startup instead of only logging a
      * warning at call time. Off by default since it requires eagerly scanning every bean for
@@ -227,6 +236,16 @@ public class AuditLogProperties {
          */
         @Min(1)
         private int batchSize = 1000;
+
+        /**
+         * Per-tenant retention window overrides (WP16), keyed by tenant id - e.g.
+         * {@code audit.log.retention.tenant-max-age.acme-corp=P30D}. {@link #maxAge} remains the
+         * default for any tenant with no entry here, and for legacy/no-tenant rows
+         * ({@code tenant_id is null}) regardless of what overrides exist. Purging runs once per
+         * distinct tenant present in {@code audit_log} (including the no-tenant case), each
+         * against its own effective cutoff - see {@code AuditLogRetentionService}.
+         */
+        private Map<String, Duration> tenantMaxAge = new HashMap<>();
     }
 
     /** See {@link #multiTenancy}. */

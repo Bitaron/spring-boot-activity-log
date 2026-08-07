@@ -21,7 +21,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "audit.log.server.api-key=test-api-key")
+        properties = {
+                "audit.log.multi-tenancy.enabled=true",
+                "audit.log.server.api-keys.default=test-api-key"
+        })
 class AuditLogServerApplicationTests {
 
     @LocalServerPort

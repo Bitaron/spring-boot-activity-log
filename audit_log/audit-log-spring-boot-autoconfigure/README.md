@@ -128,6 +128,8 @@ running).
 | `audit.log.retention.batch-size` | `1000` | Rows deleted per batch iteration. |
 | `audit.log.multi-tenancy.enabled` | `false` | Master switch for tenant tagging/scoping - see "Multi-tenancy" below. |
 | `audit.log.headers.tenant-id` | `X-TENANT-ID` | Header the default `AuditTenantResolver` reads from, when `multi-tenancy.enabled=true`. |
+| `audit.log.tenant-templates.<tenantId>.<name>` | - | Per-tenant template override, tried before `templates.<name>` for that tenant - see "Tenant-scoped templates and groups". |
+| `audit.log.retention.tenant-max-age.<tenantId>` | - | Per-tenant retention window override; falls back to `retention.max-age` for any tenant without one. |
 
 All numeric properties are validated (`@Min`) when a JSR-303 provider (e.g.
 `spring-boot-starter-validation`) is on your application's classpath; without one, invalid values
@@ -194,6 +196,17 @@ audit.log.retention.batch-size=1000
 compliance artifact. See [`docs/SCALING.md`](../../docs/SCALING.md) for how this composes with
 table partitioning on a very large table.
 
+**Per-tenant overrides**: purging runs once per distinct tenant present in `audit_log` (including
+the no-tenant/legacy case), each against its own effective cutoff:
+
+```properties
+audit.log.retention.tenant-max-age.acme-corp=P30D
+```
+
+A tenant with a shorter (or no) override is never purged by another tenant's window - `max-age`
+remains the default for any tenant with no entry here, and for legacy/no-tenant rows regardless of
+what overrides exist.
+
 ## Recording events without `@Audit`
 
 `@Audit` + AOP only works for an in-process method call. For anything else with event data to
@@ -245,13 +258,41 @@ current tenant themselves and unconditionally scope every query to it, **failing
 query. This is what makes it structurally hard for a future read to accidentally leak across
 tenants - there is no per-call filter to forget.
 
-`AuditTemplate`/`AuditGroup` are deliberately **not** tenant-scoped: templates are code-like,
-versioned with your application, not tenant data; the sensitive rows under a group are already
-tenant-tagged via `audit_log.tenant_id`. The REST server module's `POST /audit-log/events` accepts
-an explicit `tenant_id` on the wire (see its own README) - `GET /audit-log/records` does not accept
-one as a query parameter, relying on the same ambient `AuditTenantResolver` scoping described
-above, since a caller-suppliable tenant filter under that module's single-shared-API-key auth model
-would let any caller read any other tenant's data by changing a query parameter.
+### Tenant-scoped templates and groups
+
+`AuditTemplate`/`AuditGroup` are tenant-scoped too: a tenant-tagged `audit_template`/`audit_group`
+row (or a `audit.log.tenant-templates.<tenantId>.<name>` property) is preferred over a same-named
+global one for that tenant, with the global row/property as the fallback for a tenant with no
+override of its own:
+
+```properties
+# Config-defined: tried before the database, same as the tenant-agnostic layer.
+audit.log.templates.login-attempt=Login by ${actorName!"unknown"}
+audit.log.tenant-templates.acme-corp.login-attempt=Connexion de ${actorName!"unknown"}
+```
+
+Both tables use `""` (empty string), never `null`, as the "not tenant-specific" sentinel - unlike
+`audit_log.tenant_id`'s "`null` = default tenant" convention - because both have a real composite
+`(tenant_id, name)` unique constraint, and standard SQL treats every `NULL` as distinct for
+uniqueness purposes; a `NULL`-based convention here would silently allow duplicate global names.
+See `AuditTemplate`/`AuditGroup`'s `GLOBAL_TENANT_ID` javadoc. One consequence: the same
+`@Audit(groupName = ...)` value used by two different tenants resolves to two separate `AuditGroup`
+rows, never a shared one.
+
+`AuditTemplateValidator` (the opt-in `audit.log.fail-on-missing-template=true` startup check) only
+validates the global layer - it runs statically, with no per-tenant context and no way to enumerate
+every tenant that will ever call an audited method, so a template that's only defined per-tenant is
+reported missing there even though it resolves correctly at call time.
+
+### Server-mode reads and per-tenant authentication
+
+The REST server module's `POST /audit-log/events` accepts an explicit `tenant_id` on the wire (see
+its own README) when authenticating with the core starter's header-based default resolver -
+`GET /audit-log/records` does not accept one as a query parameter, relying on the same ambient
+`AuditTenantResolver` scoping described above. **The server module itself goes further**: it
+replaces the header-based default entirely with per-tenant API keys, so which tenant a request acts
+as is authenticated, not just data-tagged - see its own README's "Multi-tenancy" section for how
+that closes the gap this section's header-based default can't on its own.
 
 ## Server mode and other-language clients
 

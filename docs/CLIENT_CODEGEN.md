@@ -75,7 +75,9 @@ The rest of this document is for every other language.
    language uses, sending/accepting `Content-Type: application/x-protobuf` (binary, recommended)
    or `application/json` (Protobuf's canonical JSON mapping - camelCase field names, `int64`
    fields as JSON strings - convenient for debugging with `curl`, less efficient than binary), plus
-   the `X-API-Key` header your server is configured with (`audit.log.server.api-key`).
+   the `X-API-Key` header for whichever tenant you're calling as
+   (`audit.log.server.api-keys.<tenantId>`) - which tenant a request acts as is determined by
+   which key it presents, not by anything the client sends elsewhere.
 
 ## Why this works reliably: schema compatibility rules
 

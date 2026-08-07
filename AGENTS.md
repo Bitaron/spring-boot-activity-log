@@ -32,6 +32,7 @@ docs/
   CLIENT_CODEGEN.md                              generating a client for the REST server, any language
 db/migration/V2__audit_log_v2.sql               1.x -> 2.x schema migration (PostgreSQL dialect)
 db/migration/V3__audit_log_multi_tenancy.sql    adds the nullable, opt-in-enforced tenant_id column
+db/migration/V4__audit_log_tenant_scoped_templates_groups.sql   tenant-scopes audit_template/audit_group
 ```
 
 Dependency direction: `starter` -> `autoconfigure`. `server` -> `starter` (not `autoconfigure`
@@ -59,22 +60,24 @@ dependency that points the other way.
 | | `DefaultAuditLogRecorder` | Non-AOP write path |
 | | `FreemarkerTemplateResolver`, `JacksonAuditLogArgumentSerializer` | Default template/serialization implementations |
 | | `DefaultAuditTenantResolver` | Header-based default tenant resolution, opt-in (see "Conventions" #14) |
+| | `PropertiesAuditTemplateSource`, `DatabaseAuditTemplateSource` | Tenant-scoped (WP16) - a tenant-tagged template/row wins over the global one for that tenant, global as fallback |
 | `model` | `AuditContext`, `AuditEventRequest` | Immutable data carriers through the write pipeline |
-| `entity` | `AuditLog`, `AuditLogMessage`, `AuditOutcome`, `AuditTemplate`, `AuditGroup` | JPA entities - not the public read API, see `query` |
+| `entity` | `AuditLog`, `AuditLogMessage`, `AuditOutcome`, `AuditTemplate`, `AuditGroup` | JPA entities - not the public read API, see `query`. `AuditTemplate`/`AuditGroup` are tenant-scoped via `GLOBAL_TENANT_ID = ""` (WP16 - see "Conventions" #15) |
 | `query` | `AuditLogQueryService` / `JpaAuditLogQueryService`, `AuditQuery`, `AuditRecord`, `AuditCursor` | The supported read API |
-| `properties` | `AuditLogProperties` | `@ConfigurationProperties("audit.log")`, nested `Headers`/`Executor`/`SchemaValidation`/`Query`/`Retention`/`MultiTenancy` |
+| `properties` | `AuditLogProperties` | `@ConfigurationProperties("audit.log")`, nested `Headers`/`Executor`/`SchemaValidation`/`Query`/`Retention`/`MultiTenancy`; `Retention.tenantMaxAge` and a top-level `tenantTemplates` map are WP16 additions |
 
 ### Server/client (`audit-log-server-proto`, `audit-log-spring-boot-server`, `audit-log-java-client`)
 
 | Module | Key classes | Role |
 |---|---|---|
 | `audit-log-server-proto` | Generated from `audit_event.proto` | `AuditEventRequest`/`Response`, `AuditRecordProto`, `AuditQueryRequest`/`Response`, `AuditOutcomeProto` |
-| `audit-log-spring-boot-server` | `AuditLogServerAutoConfiguration` | Gated by `audit.log.server.enabled` (default `false`) |
+| `audit-log-spring-boot-server` | `AuditLogServerAutoConfiguration` | Gated by `audit.log.server.enabled` (default `false`); also requires `audit.log.multi-tenancy.enabled=true` (WP16) |
 | | `AuditIngestController` / `AuditQueryController` | `POST /audit-log/events`, `GET /audit-log/records` |
-| | `ApiKeyAuthFilter` | Requires `X-API-Key` on every `/audit-log/*` request |
+| | `ApiKeyAuthFilter` | Per-tenant (WP16): `X-API-Key` must match one of `audit.log.server.api-keys.<tenantId>`; resolves *which* tenant, not just whether the request is allowed |
+| | `ApiKeyAuditTenantResolver` | WP16: the `AuditTenantResolver` this module registers - reads the tenant `ApiKeyAuthFilter` authenticated, not a client-suppliable header |
 | | `ProtoMapper` | Wire<->domain mapping, one place |
 | `audit-log-java-client` | `AuditLogHttpClient` | Thin `RestClient` wrapper |
-| `audit_log_standalone_server` | `AuditLogServerApplication` | Runnable standalone deployment of the REST server - H2 by default, `postgres` profile available; requires `audit.log.server.api-key` supplied externally at startup (see "Build & test") |
+| `audit_log_standalone_server` | `AuditLogServerApplication` | Runnable standalone deployment of the REST server - H2 by default, `postgres` profile available; requires at least one `audit.log.server.api-keys.<tenantId>` entry supplied externally at startup (see "Build & test") |
 
 ## Build & test
 
@@ -98,15 +101,17 @@ mvn -pl audit_log/audit-log-java-client test                       # client modu
                                                                      # random port to test against)
 cd audit_log_usage_example && mvn spring-boot:run                   # runnable demo, localhost:8080
 
-# Path 2: run the REST server standalone. H2 in-memory by default; audit.log.server.api-key has no
-# default (fails fast at startup if unset - see AuditLogServerAutoConfiguration) and must be
-# supplied externally. Spring's relaxed env-var binding drops dashes entirely, so
-# "audit.log.server.api-key" becomes AUDIT_LOG_SERVER_APIKEY, not ..._API_KEY.
-AUDIT_LOG_SERVER_APIKEY=<your-secret> mvn -f audit_log_standalone_server/pom.xml spring-boot:run
+# Path 2: run the REST server standalone. H2 in-memory by default; at least one
+# audit.log.server.api-keys.<tenantId> entry has no default (fails fast at startup if none is
+# configured - see AuditLogServerAutoConfiguration, which also requires
+# audit.log.multi-tenancy.enabled=true, WP16) and must be supplied externally. Spring's relaxed
+# env-var binding reliably maps a Map<String,String> key only when the key itself has no
+# dashes/dots - "default" (this module's out-of-the-box tenant id) has none:
+AUDIT_LOG_SERVER_APIKEYS_DEFAULT=<your-secret> mvn -f audit_log_standalone_server/pom.xml spring-boot:run
 
 # ...or against Postgres instead (docker-compose.yml lives in that module's directory):
 cd audit_log_standalone_server && docker compose up -d
-AUDIT_LOG_SERVER_APIKEY=<your-secret> mvn spring-boot:run -Dspring-boot.run.profiles=postgres
+AUDIT_LOG_SERVER_APIKEYS_DEFAULT=<your-secret> mvn spring-boot:run -Dspring-boot.run.profiles=postgres
 ```
 
 `audit-log-server-proto` downloads a `protoc` binary (`os-maven-plugin` + `protobuf-maven-plugin`)
@@ -134,9 +139,10 @@ on first build - needs outbound access to Maven Central or a mirror.
 | `audit.log.retention.batch-size` | `1000` | Rows deleted per batch iteration |
 | `audit.log.multi-tenancy.enabled` | `false` | Master switch for tenant tagging/scoping - see "Conventions" #14 |
 | `audit.log.headers.tenant-id` | `X-TENANT-ID` | Header the default `AuditTenantResolver` reads from |
-| `audit.log.server.enabled` | `false` | Master switch for the REST server module |
-| `audit.log.server.api-key` | *(required if enabled)* | Shared secret required via `X-API-Key` |
-| `audit.log.server.multi-tenancy.required` | `false` | Reject (`400`) ingest requests with a blank `tenant_id` |
+| `audit.log.tenant-templates.<tenantId>.<name>` | - | Per-tenant template override (WP16), tried before `templates.<name>` for that tenant |
+| `audit.log.retention.tenant-max-age.<tenantId>` | - | Per-tenant retention window override (WP16); falls back to `retention.max-age` |
+| `audit.log.server.enabled` | `false` | Master switch for the REST server module; requires `audit.log.multi-tenancy.enabled=true` (WP16) |
+| `audit.log.server.api-keys.<tenantId>` | *(at least one required if enabled)* | Per-tenant API key (WP16) - which tenant a request acts as is authenticated by which key it presents |
 
 Full property javadoc lives on `AuditLogProperties`/`AuditLogServerProperties` themselves - this
 table is for discovery, not the last word on behavior.
@@ -204,6 +210,26 @@ here for fast lookup.
     putting the mandatory predicate inside the query service itself, resolved fresh per call and
     failing closed when unresolvable, is what makes cross-tenant leakage structurally hard rather
     than merely discouraged.
+15. **`AuditTemplate`/`AuditGroup.tenantId` uses `""` (empty string), never `null`, as its
+    "not tenant-specific" sentinel** - deliberately different from `AuditLog.tenantId`'s
+    "`null` = default tenant" convention (Conventions #14's neighbor). Both tables have a real
+    composite `(tenant_id, name)` unique constraint, and standard SQL treats every `NULL` as
+    distinct for uniqueness purposes - a `NULL`-based convention here would silently allow
+    duplicate global template/group names. `AuditTemplate.GLOBAL_TENANT_ID`/
+    `AuditGroup.GLOBAL_TENANT_ID` are the named constant; `AuditLogWriter` normalizes a `null`
+    `AuditContext.tenantId()` to it before querying/persisting either entity. Also has a
+    `columnDefinition` (not just `nullable = false`) on the mapped column, so a `ddl-auto`-
+    generated schema gets a real SQL-level `DEFAULT ''` too - otherwise a raw `INSERT` that omits
+    the column (any seed-data script) would hit a `NOT NULL` violation instead of picking up the
+    sentinel. Caught empirically fixing `audit_log_usage_example`'s `data.sql`.
+16. **The server module's per-tenant API keys (`ApiKeyAuthFilter`) authenticate a tenant, not just
+    tag one.** `AuditIngestController` derives the persisted event's tenant from
+    `AuditTenantResolver` (i.e. from the key), never trusting the wire `tenant_id` on its own -
+    a body naming a *different* tenant than the one authenticated is rejected (`400`), not
+    silently overridden. `AuditLogServerAutoConfiguration` fails startup if
+    `audit.log.multi-tenancy.enabled` isn't also `true`: per-tenant keys without the core
+    starter's tenant-scoped read enforcement would authenticate a tenant identity that nothing
+    then confines reads by, which would be misleading rather than merely incomplete.
 
 ## Testing patterns
 
@@ -229,7 +255,10 @@ here for fast lookup.
   observing an `ASYNC`-dispatched write waits for it, rather than a fixed `Thread.sleep`.
 - **`@SpringBootTest` + `MockMvc`/`RestClient` at a random port** (`AuditLogServerIntegrationTest`,
   `AuditLogHttpClientTest`) is reserved for the server/client modules, where a real HTTP round trip
-  (content negotiation, the API-key filter) is the thing under test.
+  (content negotiation, the API-key filter) is the thing under test. WP16 split the per-tenant-key
+  cross-tenant-isolation cases into their own `AuditLogServerMultiTenancyIntegrationTest` class,
+  since it needs more than one configured tenant while `AuditLogServerIntegrationTest` deliberately
+  keeps testing the single-tenant case.
 
 ## Where to go deeper
 
@@ -246,7 +275,9 @@ here for fast lookup.
   both the v2 redesign and the v3 (server mode/scale) pass. Read this if you want the *history*
   behind a decision, not just the decision itself.
 - Each module's own `README.md` (`audit_log/audit-log-spring-boot-autoconfigure/README.md` is the
-  primary one - usage examples, extension points, the actor-identity trust model).
+  primary one - usage examples, extension points, the actor-identity trust model;
+  `audit_log/audit-log-spring-boot-server/README.md` covers the REST endpoints and per-tenant
+  authentication specifically).
 
 ## Contribution conventions
 

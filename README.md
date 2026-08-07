@@ -75,14 +75,15 @@ For a realistic run against PostgreSQL instead: `docker compose up -d` in
 is the runnable app around it, for a caller with no in-process JVM to depend on the library from:
 
 ```bash
-AUDIT_LOG_SERVER_APIKEY=<your-secret> mvn -f audit_log_standalone_server/pom.xml spring-boot:run
+AUDIT_LOG_SERVER_APIKEYS_DEFAULT=<your-secret> mvn -f audit_log_standalone_server/pom.xml spring-boot:run
 ```
 
-`audit.log.server.api-key` has no default - the app fails fast at startup if it's unset, since
-there's no safe default that leaves the ingest/query endpoints open. Note Spring's relaxed
-environment-variable binding drops dashes entirely, so the property maps to `AUDIT_LOG_SERVER_APIKEY`
-(not `..._API_KEY`). See [its README](audit_log_standalone_server/README.md) for the Postgres
-profile and a curl smoke test.
+`audit.log.server.api-keys.<tenantId>` has no default - the app fails fast at startup if none is
+configured, since there's no safe default that leaves the ingest/query endpoints open. Each key
+authenticates exactly one tenant; `default` is this app's out-of-the-box tenant id, chosen because
+it has no dashes/dots (Spring's relaxed environment-variable binding can't always map a `Map` key
+that does). See [its README](audit_log_standalone_server/README.md) for the Postgres profile, a
+curl smoke test, and running more than one tenant.
 
 ## Modules
 

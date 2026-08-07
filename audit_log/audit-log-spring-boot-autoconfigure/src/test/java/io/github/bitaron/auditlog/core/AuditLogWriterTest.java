@@ -223,12 +223,72 @@ class AuditLogWriterTest {
         });
     }
 
+    /** WP16 acceptance: a tenant-specific {@code audit_template} row is preferred over a
+     * same-named global one - see {@code DatabaseAuditTemplateSource}. */
+    @Test
+    void tenantSpecificTemplateOverridesGlobalTemplate() {
+        contextRunner.run(context -> {
+            seedTemplate(context, "greeting", "Hello ${actorName}!");
+            seedTemplate(context, "greeting", "Bonjour ${actorName}!", "acme-corp");
+
+            persistSynchronously(context, "greeting", clientData("actor-1", "Ada", null, "acme-corp"));
+
+            assertThat(findAllMessages(context)).extracting(AuditLogMessage::getMessage)
+                    .containsExactly("Bonjour Ada!");
+        });
+    }
+
+    /** A tenant with no override of its own still resolves the global template - multi-tenancy
+     * doesn't force every tenant to define every template. */
+    @Test
+    void tenantWithNoOverrideFallsBackToGlobalTemplate() {
+        contextRunner.run(context -> {
+            seedTemplate(context, "greeting", "Hello ${actorName}!");
+
+            persistSynchronously(context, "greeting", clientData("actor-1", "Ada", null, "no-override-tenant"));
+
+            assertThat(findAllMessages(context)).extracting(AuditLogMessage::getMessage)
+                    .containsExactly("Hello Ada!");
+        });
+    }
+
+    /** WP16 acceptance: the same {@code groupName} used by two different tenants resolves to two
+     * distinct {@code AuditGroup} rows, not one shared between them. */
+    @Test
+    void sameGroupNameInDifferentTenantsCreatesSeparateGroups() {
+        contextRunner.run(context -> {
+            persistSynchronously(context, "grouped", clientData("actor-1", "Ada", null, "tenant-a"));
+            persistSynchronously(context, "grouped", clientData("actor-2", "Bob", null, "tenant-b"));
+
+            List<Long> groupIds = findAll(context).stream().map(AuditLog::getGroupId).distinct().toList();
+            assertThat(groupIds).hasSize(2);
+        });
+    }
+
+    /** Within the same tenant, reusing a {@code groupName} still reuses the same
+     * {@code AuditGroup} row - the pre-WP16 behavior, unaffected by tenant scoping. */
+    @Test
+    void sameGroupNameWithinTheSameTenantReusesTheSameGroup() {
+        contextRunner.run(context -> {
+            persistSynchronously(context, "grouped", clientData("actor-1", "Ada", null, "tenant-a"));
+            persistSynchronously(context, "grouped", clientData("actor-2", "Bob", null, "tenant-a"));
+
+            List<Long> groupIds = findAll(context).stream().map(AuditLog::getGroupId).distinct().toList();
+            assertThat(groupIds).hasSize(1);
+        });
+    }
+
     private void seedTemplate(ApplicationContext context, String name, String template) {
+        seedTemplate(context, name, template, AuditTemplate.GLOBAL_TENANT_ID);
+    }
+
+    private void seedTemplate(ApplicationContext context, String name, String template, String tenantId) {
         transactionTemplate(context).executeWithoutResult(status -> {
             EntityManager entityManager = context.getBean(EntityManager.class);
             AuditTemplate auditTemplate = new AuditTemplate();
             auditTemplate.setName(name);
             auditTemplate.setTemplate(template);
+            auditTemplate.setTenantId(tenantId);
             entityManager.persist(auditTemplate);
         });
     }
@@ -256,7 +316,11 @@ class AuditLogWriterTest {
     }
 
     private AuditContext clientData(String actorId, String actorName, Object args) {
-        return new AuditContext(actorId, actorName, null, null, null, args, null, null, false, 0, null, null);
+        return clientData(actorId, actorName, args, null);
+    }
+
+    private AuditContext clientData(String actorId, String actorName, Object args, String tenantId) {
+        return new AuditContext(actorId, actorName, null, null, null, args, null, null, false, 0, null, tenantId);
     }
 
     /** Retrieves a real {@code @Audit} instance off a fixture method, avoiding hand-rolled annotation proxies. */
@@ -288,6 +352,10 @@ class AuditLogWriterTest {
 
         @Audit(auditType = "test", actionName = "action", actionType = "type")
         void noTemplates() {
+        }
+
+        @Audit(auditType = "test", actionName = "action", actionType = "type", groupName = "batch-job")
+        void grouped() {
         }
     }
 }

@@ -44,20 +44,35 @@ class AuditLogServerAutoConfigurationTest {
     }
 
     @Test
-    void enabledWithoutApiKeyFailsStartup() {
-        contextRunner.withPropertyValues("audit.log.server.enabled=true")
+    void enabledWithoutApiKeysFailsStartup() {
+        contextRunner.withPropertyValues(
+                        "audit.log.server.enabled=true",
+                        "audit.log.multi-tenancy.enabled=true")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    /** WP16: per-tenant keys without the core starter's tenant-scoped read enforcement would
+     * authenticate a tenant without ever actually confining reads to it - refused outright. */
+    @Test
+    void enabledWithApiKeysButMultiTenancyDisabledFailsStartup() {
+        contextRunner.withPropertyValues(
+                        "audit.log.server.enabled=true",
+                        "audit.log.server.api-keys.tenant-a=a-secret")
                 .run(context -> assertThat(context).hasFailed());
     }
 
     @Test
-    void enabledWithApiKeyRegistersBothControllers() {
+    void enabledWithApiKeysAndMultiTenancyRegistersBothControllers() {
         contextRunner.withPropertyValues(
                         "audit.log.server.enabled=true",
-                        "audit.log.server.api-key=a-secret")
+                        "audit.log.multi-tenancy.enabled=true",
+                        "audit.log.server.api-keys.tenant-a=a-secret")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context).hasSingleBean(AuditIngestController.class);
                     assertThat(context).hasSingleBean(AuditQueryController.class);
+                    assertThat(context.getBean(io.github.bitaron.auditlog.contract.AuditTenantResolver.class))
+                            .isInstanceOf(ApiKeyAuditTenantResolver.class);
                 });
     }
 }

@@ -25,7 +25,8 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "spring.datasource.generate-unique-name=true",
                 "spring.jpa.hibernate.ddl-auto=create-drop",
                 "audit.log.server.enabled=true",
-                "audit.log.server.api-key=client-test-key"
+                "audit.log.multi-tenancy.enabled=true",
+                "audit.log.server.api-keys.client-test-tenant=client-test-key"
         })
 class AuditLogHttpClientTest {
 

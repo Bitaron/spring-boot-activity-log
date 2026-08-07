@@ -7,5 +7,7 @@
 -- FreeMarker's default operator only suppresses a null/missing error for the whole parenthesized
 -- expression, not a bare chained reference, so unparenthesized result.body.value would still
 -- throw when result itself is null on the failure path.
-insert into audit_template (name, template) values
-    ('test_template', 'Actor ${actorName!"unknown"} (${actorId!"n/a"}) called the test endpoint<#if exceptionThrown> and it failed: ${(exception.message)!"unknown error"}<#else> and got value ${(result.body.value)!"n/a"}</#if>');
+-- tenant_id = '' (AuditTemplate.GLOBAL_TENANT_ID): this demo has multi-tenancy disabled, so every
+-- template resolves through the global/tenant-agnostic layer - see DatabaseAuditTemplateSource.
+insert into audit_template (name, template, tenant_id) values
+    ('test_template', 'Actor ${actorName!"unknown"} (${actorId!"n/a"}) called the test endpoint<#if exceptionThrown> and it failed: ${(exception.message)!"unknown error"}<#else> and got value ${(result.body.value)!"n/a"}</#if>', '');

@@ -193,6 +193,37 @@ class AuditLogAutoConfigurationTest {
         });
     }
 
+    /** WP16 acceptance: {@code audit.log.tenant-templates.<tenantId>.<name>} overrides the
+     * tenant-agnostic {@code audit.log.templates.<name>} for that tenant only - the properties-
+     * defined counterpart to {@code AuditLogWriterTest}'s database-backed override test. */
+    @Test
+    void tenantSpecificPropertiesTemplateOverridesGlobalPropertiesTemplate() {
+        contextRunner.withPropertyValues(
+                        "audit.log.templates.greeting=Hello ${actorName}!",
+                        "audit.log.tenant-templates.acme-corp.greeting=Bonjour ${actorName}!")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    AuditLogWriter writer = context.getBean(AuditLogWriter.class);
+                    PlatformTransactionManager transactionManager = context.getBean(PlatformTransactionManager.class);
+                    AuditContext acmeContext = new AuditContext(
+                            "actor-1", "Ada", null, null, null, null, null, null, false, 0, null, "acme-corp");
+                    AuditContext otherTenantContext = new AuditContext(
+                            "actor-2", "Bob", null, null, null, null, null, null, false, 0, null, "other-tenant");
+
+                    new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                        writer.persistRequiresNew(fixtureAudit(), acmeContext);
+                        writer.persistRequiresNew(fixtureAudit(), otherTenantContext);
+                    });
+
+                    List<AuditLogMessage> messages = new TransactionTemplate(transactionManager).execute(status ->
+                            context.getBean(EntityManager.class)
+                                    .createQuery("select m from AuditLogMessage m order by m.id", AuditLogMessage.class)
+                                    .getResultList());
+                    assertThat(messages).extracting(AuditLogMessage::getMessage)
+                            .containsExactly("Bonjour Ada!", "Hello Bob!");
+                });
+    }
+
     @Test
     void failOnMissingTemplateFailsStartupWhenUnresolved() {
         contextRunner.withUserConfiguration(AuditedBeanConfig.class)

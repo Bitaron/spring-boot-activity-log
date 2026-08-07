@@ -240,6 +240,6 @@ public class AuditLogAutoConfiguration {
                             + "there is no safe default retention window for a compliance artifact");
         }
         return new AuditLogRetentionService(sharedEntityManager(entityManagerFactory), transactionManager,
-                retention.getMaxAge(), retention.getCron(), retention.getBatchSize());
+                retention.getMaxAge(), retention.getTenantMaxAge(), retention.getCron(), retention.getBatchSize());
     }
 }

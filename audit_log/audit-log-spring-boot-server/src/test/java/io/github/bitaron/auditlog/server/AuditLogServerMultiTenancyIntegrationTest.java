@@ -16,11 +16,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * WP15 acceptance tests for the server module's multi-tenancy threading - kept as a separate test
- * class from {@link AuditLogServerIntegrationTest} since the two multi-tenancy switches
- * ({@code audit.log.multi-tenancy.enabled} and {@code audit.log.server.multi-tenancy.required})
- * need to be on here but must stay off for that class's tests to keep testing today's default
- * (non-multi-tenant) behavior.
+ * WP16 acceptance tests for real per-tenant server authentication: two tenants, each with its own
+ * {@code audit.log.server.api-keys.<tenantId>} secret. Kept as a separate test class from
+ * {@link AuditLogServerIntegrationTest} since that class deliberately configures only one tenant.
+ * <p>
+ * The core guarantee under test: which tenant a request acts as is determined entirely by which
+ * API key it presents - never by anything the caller puts in a header or request body - so a
+ * caller holding tenant-a's key can never read or write tenant-b's data, and vice versa.
  */
 @SpringBootTest(
         classes = TestServerApplication.class,
@@ -29,49 +31,32 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
                 "spring.datasource.generate-unique-name=true",
                 "spring.jpa.hibernate.ddl-auto=create-drop",
                 "audit.log.server.enabled=true",
-                "audit.log.server.api-key=test-api-key",
                 "audit.log.multi-tenancy.enabled=true",
-                "audit.log.server.multi-tenancy.required=true"
+                "audit.log.server.api-keys.tenant-a=key-a",
+                "audit.log.server.api-keys.tenant-b=key-b"
         })
 @AutoConfigureMockMvc
 class AuditLogServerMultiTenancyIntegrationTest {
 
     private static final String API_KEY_HEADER = "X-API-Key";
-    private static final String API_KEY = "test-api-key";
-    private static final String TENANT_HEADER = "X-TENANT-ID";
 
     @Autowired
     private MockMvc mockMvc;
 
-    @Test
-    void ingestWithoutTenantIdIsRejectedWhenRequired() throws Exception {
-        AuditEventRequest request = AuditEventRequest.newBuilder()
-                .setAuditType("no-tenant-event")
-                .build();
-
-        mockMvc.perform(post("/audit-log/events")
-                        .header(API_KEY_HEADER, API_KEY)
-                        .contentType("application/x-protobuf")
-                        .content(request.toByteArray()))
-                .andExpect(status().isBadRequest());
-    }
-
     /**
-     * The cross-tenant-isolation guarantee, over real HTTP: two tenants' events are ingested
-     * (tenant carried explicitly via the wire {@code tenant_id} field, since ingest has no ambient
-     * request-scoped tenant of its own to resolve), then a read scoped by the {@code X-TENANT-ID}
-     * header via the default {@code AuditTenantResolver} sees only the matching tenant's rows -
-     * never the other tenant's, no matter which header value is sent.
+     * The cross-tenant-isolation guarantee, over real HTTP: events ingested under tenant-a's and
+     * tenant-b's own keys (neither request body ever names a tenant - it's authenticated from the
+     * key alone) stay isolated when queried back - a caller holding only tenant-a's key can never
+     * see tenant-b's row, no matter how it queries, and vice versa.
      */
     @Test
-    void queryIsScopedToTheTenantIdHeader() throws Exception {
-        ingest("tenant-scoped-event", "tenant-a");
-        ingest("tenant-scoped-event", "tenant-b");
+    void eachTenantsKeyOnlyEverSeesItsOwnData() throws Exception {
+        ingest("key-a", "tenant-scoped-event");
+        ingest("key-b", "tenant-scoped-event");
 
         Awaitility.await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
                 mockMvc.perform(get("/audit-log/records")
-                                .header(API_KEY_HEADER, API_KEY)
-                                .header(TENANT_HEADER, "tenant-a")
+                                .header(API_KEY_HEADER, "key-a")
                                 .param("auditType", "tenant-scoped-event")
                                 .accept("application/json"))
                         .andExpect(status().isOk())
@@ -79,8 +64,7 @@ class AuditLogServerMultiTenancyIntegrationTest {
                         .andExpect(jsonPath("$.records[0].tenantId").value("tenant-a")));
 
         mockMvc.perform(get("/audit-log/records")
-                        .header(API_KEY_HEADER, API_KEY)
-                        .header(TENANT_HEADER, "tenant-b")
+                        .header(API_KEY_HEADER, "key-b")
                         .param("auditType", "tenant-scoped-event")
                         .accept("application/json"))
                 .andExpect(status().isOk())
@@ -88,22 +72,36 @@ class AuditLogServerMultiTenancyIntegrationTest {
                 .andExpect(jsonPath("$.records[0].tenantId").value("tenant-b"));
     }
 
-    /** No {@code X-TENANT-ID} header at all - the fail-closed guarantee applies over HTTP too. */
+    /** A key that doesn't match any configured tenant is rejected, same as no key at all. */
     @Test
-    void queryWithNoTenantHeaderIsRejected() throws Exception {
+    void queryWithAnUnrecognizedKeyIsRejected() throws Exception {
         mockMvc.perform(get("/audit-log/records")
-                        .header(API_KEY_HEADER, API_KEY)
+                        .header(API_KEY_HEADER, "not-a-configured-key")
                         .accept("application/json"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    /** tenant-a's key cannot be used to write data that claims to be tenant-b's. */
+    @Test
+    void tenantAsKeyCannotIngestAsTenantB() throws Exception {
+        AuditEventRequest request = AuditEventRequest.newBuilder()
+                .setAuditType("cross-tenant-attempt")
+                .setTenantId("tenant-b")
+                .build();
+
+        mockMvc.perform(post("/audit-log/events")
+                        .header(API_KEY_HEADER, "key-a")
+                        .contentType("application/x-protobuf")
+                        .content(request.toByteArray()))
                 .andExpect(status().isBadRequest());
     }
 
-    private void ingest(String auditType, String tenantId) throws Exception {
+    private void ingest(String apiKey, String auditType) throws Exception {
         AuditEventRequest request = AuditEventRequest.newBuilder()
                 .setAuditType(auditType)
-                .setTenantId(tenantId)
-                .build();
+                .build(); // no tenant_id on the wire - authenticated from apiKey alone, see class javadoc
         mockMvc.perform(post("/audit-log/events")
-                        .header(API_KEY_HEADER, API_KEY)
+                        .header(API_KEY_HEADER, apiKey)
                         .contentType("application/x-protobuf")
                         .content(request.toByteArray()))
                 .andExpect(status().isAccepted());

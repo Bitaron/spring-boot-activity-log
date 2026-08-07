@@ -130,7 +130,24 @@ docs.
 | Writes | New `AuditLogRecorder` (+ `AuditEventRequest`): record an audit event programmatically, with no `@Audit`-annotated method invocation for AOP to intercept - a message-queue consumer, a batch job, or the new REST server module below. |
 | Server | New optional module `audit-log-spring-boot-server`: a Protobuf-over-HTTP ingestion/query server (`POST /audit-log/events`, `GET /audit-log/records`). Off by default (`audit.log.server.enabled=false`); requires `audit.log.server.api-key` once enabled. |
 | Client | New `audit-log-server-proto` (generated Protobuf types, `.proto` schema bundled in the jar) and `audit-log-java-client` (a typed `RestClient` wrapper) modules for talking to the server module. |
-| Multi-tenancy | New opt-in tenant tagging/scoping (`audit.log.multi-tenancy.enabled=false` by default - zero behavior change on upgrade). New `AuditTenantResolver` SPI (`DefaultAuditTenantResolver` reads `audit.log.headers.tenant-id`, default `X-TENANT-ID`); `AuditContext`/`AuditEventRequest`/`AuditRecord` each gain a trailing `tenantId` field (source-breaking for any direct positional-constructor call - update call sites); new nullable `audit_log.tenant_id` column (`V3__audit_log_multi_tenancy.sql`). Once enabled, every `AuditLogQueryService` read is unconditionally scoped to the resolved tenant (not a caller-suppliable `AuditQuery` field) and fails closed (`IllegalStateException`) if none resolves. `AuditEventRequest`/`AuditRecordProto` gain a `tenant_id` field on the wire; `AuditQueryRequest` deliberately does not, for the reason documented in `audit_event.proto`. |
+| Multi-tenancy | New opt-in tenant tagging/scoping (`audit.log.multi-tenancy.enabled=false` by default - zero behavior change on upgrade for the core starter's own reads/writes). New `AuditTenantResolver` SPI (`DefaultAuditTenantResolver` reads `audit.log.headers.tenant-id`, default `X-TENANT-ID`); `AuditContext`/`AuditEventRequest`/`AuditRecord` each gain a trailing `tenantId` field (source-breaking for any direct positional-constructor call - update call sites); new nullable `audit_log.tenant_id` column (`V3__audit_log_multi_tenancy.sql`). Once enabled, every `AuditLogQueryService` read is unconditionally scoped to the resolved tenant (not a caller-suppliable `AuditQuery` field) and fails closed (`IllegalStateException`) if none resolves. `AuditEventRequest`/`AuditRecordProto` gain a `tenant_id` field on the wire; `AuditQueryRequest` deliberately does not, for the reason documented in `audit_event.proto`. |
+| Multi-tenancy (WP16) | `AuditTemplate`/`AuditGroup` are now tenant-scoped too (new `tenant_id` column, `""` sentinel for "global" - see `AuditTemplate.GLOBAL_TENANT_ID`; `V4__audit_log_tenant_scoped_templates_groups.sql`); new `audit.log.tenant-templates.<tenantId>.<name>` property layer. `AuditLogRetentionService` purges per-tenant, honoring a new `audit.log.retention.tenant-max-age.<tenantId>` override with `retention.max-age` as the fallback. The server module's authentication is now per-tenant - see "Breaking changes" below, this one is **not** purely additive. |
+
+### Breaking changes in WP16 (server module + `AuditTemplateSource` SPI)
+
+Unlike everything else in this table, these two are not backward compatible - there was no
+existing deployment of this pre-release library to preserve compatibility for, so the redesign
+went straight to the better shape rather than keeping both old and new side by side:
+
+- **`audit.log.server.api-key` (single shared secret) is gone.** Replaced entirely by
+  `audit.log.server.api-keys.<tenantId>` (a map, at least one entry required) - see the server
+  module's own README. `audit.log.server.multi-tenancy.required` is also gone: every ingest is now
+  authenticated to exactly one tenant by the key it's presented with, so there's no separate
+  "should tenant be required" toggle left to have. The server module additionally now requires
+  `audit.log.multi-tenancy.enabled=true` whenever it's enabled - fails startup otherwise.
+- **`AuditTemplateSource.findTemplate(String name)` is now `findTemplate(String tenantId, String name)`.**
+  Any custom `AuditTemplateSource` bean needs its `findTemplate` signature updated; a source with no
+  notion of tenancy can simply ignore the new parameter.
 
 ### New configuration properties
 
@@ -142,8 +159,9 @@ docs.
 | `audit.log.retention.max-age` | *(required if enabled)* | Records older than this become eligible for deletion |
 | `audit.log.retention.cron` | `0 0 3 * * *` | When the purge job runs |
 | `audit.log.retention.batch-size` | `1000` | Rows deleted per batch iteration |
-| `audit.log.server.enabled` | `false` | Master switch for the REST server module |
-| `audit.log.server.api-key` | *(required if enabled)* | Shared secret required via the `X-API-Key` header |
+| `audit.log.server.enabled` | `false` | Master switch for the REST server module; requires `audit.log.multi-tenancy.enabled=true` (WP16) |
+| `audit.log.server.api-keys.<tenantId>` | *(at least one required if enabled)* | Per-tenant API key (WP16) via the `X-API-Key` header - replaces the removed `audit.log.server.api-key` |
 | `audit.log.multi-tenancy.enabled` | `false` | Master switch for tenant tagging/scoping |
 | `audit.log.headers.tenant-id` | `X-TENANT-ID` | Header the default `AuditTenantResolver` reads from |
-| `audit.log.server.multi-tenancy.required` | `false` | Reject (`400`) ingest requests with a blank `tenant_id` |
+| `audit.log.tenant-templates.<tenantId>.<name>` | - | Per-tenant template override (WP16) |
+| `audit.log.retention.tenant-max-age.<tenantId>` | - | Per-tenant retention window override (WP16) |

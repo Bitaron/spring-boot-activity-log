@@ -21,6 +21,16 @@ import java.util.TreeSet;
  * Off by default because it means eagerly resolving a bean's real class (unwrapping any AOP
  * proxy) and reflectively scanning its methods for every singleton in the context, which not
  * every application wants to pay for at startup.
+ * <p>
+ * <b>Tenant-scoped templates (WP16) are only partially covered by this check</b>: startup
+ * validation runs statically, with no per-tenant {@link io.github.bitaron.auditlog.model.AuditContext}
+ * to resolve a tenant from and no way to enumerate every tenant that will ever call an audited
+ * method - so it only resolves each template against the tenant-agnostic/global layer (a
+ * {@code null} tenant). A template that's only defined per-tenant (via
+ * {@code audit.log.tenant-templates.<tenantId>.<name>} or a tenant-tagged {@code audit_template}
+ * row, with no global fallback) will be reported missing here even though it resolves correctly at
+ * call time for the tenant it's actually defined for - a known, deliberate false positive rather
+ * than silently skipping tenant-specific templates from validation entirely.
  */
 @Slf4j
 public class AuditTemplateValidator implements SmartInitializingSingleton {
@@ -64,7 +74,7 @@ public class AuditTemplateValidator implements SmartInitializingSingleton {
 
     private Optional<String> findTemplate(String name) {
         for (AuditTemplateSource source : auditTemplateSources) {
-            Optional<String> template = source.findTemplate(name);
+            Optional<String> template = source.findTemplate(null, name);
             if (template.isPresent()) {
                 return template;
             }

@@ -5,6 +5,9 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 /**
  * Configuration for the optional REST ingestion/query server, bound under {@code audit.log.server}.
  * <p>
@@ -24,42 +27,23 @@ public class AuditLogServerProperties {
     private boolean enabled = false;
 
     /**
-     * Shared-secret value required (via the {@code X-API-Key} header) on every request to this
-     * module's endpoints. Required when {@link #enabled} is {@code true} - there is no safe
-     * default that leaves audit ingestion/read endpoints open, so an unset key fails startup
-     * rather than running unauthenticated (see {@code AuditLogServerAutoConfiguration}).
+     * Per-tenant API keys (WP16), keyed by tenant id - e.g.
+     * {@code audit.log.server.api-keys.acme-corp=<secret-for-acme>}. The value presented via the
+     * {@code X-API-Key} header on every request to this module identifies exactly one tenant
+     * (see {@link ApiKeyAuthFilter}); that tenant is what {@link ApiKeyAuditTenantResolver} feeds
+     * into every write and read from then on, so a caller can only ever act as the tenant its own
+     * key was issued for - not a caller-suppliable value it could set to another tenant.
      * <p>
-     * This is a first cut, not a complete auth solution: a single static shared secret has no
-     * per-caller identity, rotation story, or revocation. Production deployments should front this
-     * module with real authn/authz (mTLS, an OAuth2 resource server, network policy) - see this
-     * module's README.
+     * Required (non-empty) when {@link #enabled} is {@code true} - there is no safe default that
+     * leaves audit ingestion/read endpoints open, so no configured keys fails startup rather than
+     * running unauthenticated (see {@code AuditLogServerAutoConfiguration}). This module also
+     * requires {@code audit.log.multi-tenancy.enabled=true} whenever it's enabled: per-tenant keys
+     * without the core starter's tenant-scoped read enforcement would authenticate a tenant without
+     * ever actually confining that tenant's reads to its own data.
+     * <p>
+     * Still a first cut, not a complete auth solution: a static key per tenant has no rotation or
+     * revocation story of its own. Production deployments should front this module with real
+     * authn/authz (mTLS, an OAuth2 resource server, network policy) - see this module's README.
      */
-    private String apiKey;
-
-    /**
-     * See {@link MultiTenancy}. Not {@code @Valid}-cascaded like the core starter's nested
-     * property groups - unlike {@code AuditLogProperties}, this module has no
-     * {@code jakarta.validation-api} on its compile classpath at all (nothing here has ever
-     * needed JSR-303 constraints), and this nested class has none either.
-     */
-    private final MultiTenancy multiTenancy = new MultiTenancy();
-
-    /**
-     * Server-module-local tenant-tagging enforcement for {@code POST /audit-log/events} -
-     * independent of the core starter's {@code audit.log.multi-tenancy.enabled} (a deployment
-     * could run reads in enforced multi-tenant mode while still accepting untagged legacy ingest
-     * traffic during a migration window, or vice versa) - though leaving this off while the core
-     * flag is on means untagged ingests fall back to the "null = default tenant" convention, which
-     * is usually not what's wanted; keep the two in lockstep operationally.
-     */
-    @Getter
-    @Setter
-    public static class MultiTenancy {
-        /**
-         * When {@code true}, {@code POST /audit-log/events} rejects (400) any request whose
-         * {@code tenant_id} is blank. Off by default - matches the core starter's tenant fields
-         * being optional everywhere else.
-         */
-        private boolean required = false;
-    }
+    private Map<String, String> apiKeys = new LinkedHashMap<>();
 }

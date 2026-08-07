@@ -25,7 +25,14 @@ final class ProtoMapper {
     private ProtoMapper() {
     }
 
-    static AuditEventRequest toEventRequest(io.github.bitaron.auditlog.server.proto.v1.AuditEventRequest proto) {
+    /**
+     * @param tenantId the authenticated tenant (WP16) - not read from {@code proto.getTenantId()}
+     * here; {@link AuditIngestController} already validated the wire value (if any) against this
+     * before calling in, so this parameter is the single source of truth for the resulting
+     * domain object's tenant
+     */
+    static AuditEventRequest toEventRequest(io.github.bitaron.auditlog.server.proto.v1.AuditEventRequest proto,
+                                              String tenantId) {
         return new AuditEventRequest(
                 proto.getAuditType(),
                 proto.getActionName(),
@@ -43,7 +50,7 @@ final class ProtoMapper {
                 proto.getExceptionThrown(),
                 proto.getDurationMillis(),
                 emptyToNull(proto.getTraceId()),
-                emptyToNull(proto.getTenantId()));
+                tenantId);
     }
 
     static AuditEventResponse toEventResponse(boolean accepted) {
