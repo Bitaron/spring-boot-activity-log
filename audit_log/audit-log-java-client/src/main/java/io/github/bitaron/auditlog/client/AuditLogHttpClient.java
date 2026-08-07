@@ -35,8 +35,25 @@ public final class AuditLogHttpClient {
      * @param apiKey  the value configured as {@code audit.log.server.api-key} on the server
      */
     public AuditLogHttpClient(String baseUrl, String apiKey) {
+        this(RestClient.builder(), baseUrl, apiKey);
+    }
+
+    /**
+     * Same as {@link #AuditLogHttpClient(String, String)}, but starting from a caller-supplied
+     * {@link RestClient.Builder} instead of a fresh {@link RestClient#builder()} - the seam for
+     * configuring connect/read timeouts, interceptors, or a custom
+     * {@link org.springframework.http.client.ClientHttpRequestFactory} (this class exposes none
+     * of those directly). The Protobuf message converter is still added here regardless of what
+     * the builder already has configured.
+     *
+     * @param restClientBuilder the builder to start from; {@code baseUrl} and the Protobuf message
+     *                          converter are applied on top of whatever it already has configured
+     * @param baseUrl           the server module's base URL, e.g. {@code "https://audit.example.com"}
+     * @param apiKey            the value configured as {@code audit.log.server.api-key} on the server
+     */
+    public AuditLogHttpClient(RestClient.Builder restClientBuilder, String baseUrl, String apiKey) {
         this.apiKey = apiKey;
-        this.restClient = RestClient.builder()
+        this.restClient = restClientBuilder
                 .baseUrl(baseUrl)
                 .messageConverters(converters -> converters.add(0, new ProtobufHttpMessageConverter()))
                 .build();

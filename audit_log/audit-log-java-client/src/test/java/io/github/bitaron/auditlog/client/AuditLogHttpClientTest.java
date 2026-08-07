@@ -7,8 +7,12 @@ import org.awaitility.Awaitility;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.http.client.ClientHttpRequestFactory;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -48,5 +52,32 @@ class AuditLogHttpClientTest {
             assertThat(response.getRecordsList()).hasSize(1);
             assertThat(response.getRecordsList().get(0).getActorId()).isEqualTo("client-actor");
         });
+    }
+
+    /**
+     * WP17 acceptance: the {@code (RestClient.Builder, baseUrl, apiKey)} constructor actually
+     * routes requests through the supplied builder's {@link ClientHttpRequestFactory} - the seam
+     * autoconfiguration (and any caller wanting custom timeouts/interceptors) needs.
+     */
+    @Test
+    void constructorWithCustomRestClientBuilderUsesTheSuppliedRequestFactory() {
+        AtomicInteger requestCount = new AtomicInteger();
+        ClientHttpRequestFactory delegate = new SimpleClientHttpRequestFactory();
+        ClientHttpRequestFactory countingFactory = (uri, httpMethod) -> {
+            requestCount.incrementAndGet();
+            return delegate.createRequest(uri, httpMethod);
+        };
+
+        AuditLogHttpClient client = new AuditLogHttpClient(
+                RestClient.builder().requestFactory(countingFactory),
+                "http://localhost:" + port, "client-test-key");
+
+        AuditEventResponse response = client.ingest(AuditEventRequest.newBuilder()
+                .setAuditType("ctor-test")
+                .setActorId("ctor-actor")
+                .build());
+
+        assertThat(response.getAccepted()).isTrue();
+        assertThat(requestCount.get()).isEqualTo(1);
     }
 }
