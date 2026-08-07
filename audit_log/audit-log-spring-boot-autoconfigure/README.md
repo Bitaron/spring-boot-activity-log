@@ -153,13 +153,15 @@ Don't query the `AuditLog`/`AuditLogMessage` entities directly - use `AuditLogQu
 
 ```java
 Page<AuditRecord> page = auditLogQueryService.find(
-        new AuditQuery("actor-123", "USER_MANAGEMENT", from, to),
+        AuditQuery.byActorAndType("actor-123", "USER_MANAGEMENT").withCreatedBetween(from, to),
         PageRequest.of(0, 20));
 ```
 
 `AuditQuery` filters on `actorId`, `auditType`, and a `createdAt` range - the table's three indexed
 columns. `AuditRecord` is an immutable projection, not the JPA entity, so the persistence model is
-free to change without breaking this API.
+free to change without breaking this API. Besides the canonical constructor and `all()`, static
+factories (`byActor`, `byType`, `byActorAndType`) and "wither" methods (`withActor`, `withType`,
+`withCreatedBetween`) cover the common cases without naming every unfiltered field as `null`.
 
 `Pageable`'s page size is rejected (`IllegalArgumentException`) above `audit.log.query.max-page-size`
 (default `200`) rather than silently clamped, and its `Sort` is honored but restricted to a
