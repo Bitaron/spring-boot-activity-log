@@ -82,6 +82,20 @@
             <artifactId>audit-log-spring-boot-starter</artifactId>
             <version>${audit-log.version}</version>
         </dependency>
+        <!--
+            WP17: io.github.bitaron.auditlog.testsupport.AuditLogAssertions, published as the
+            autoconfigure module's "tests" classifier - lets this app's own tests assert an audit
+            record was written through AuditLogQueryService instead of raw JPQL/EntityManager
+            calls. Test-only, so it doesn't affect Conventions #12 (starter-not-autoconfigure for
+            main-scope AOP class loading).
+        -->
+        <dependency>
+            <groupId>io.github.bitaron</groupId>
+            <artifactId>audit-log-spring-boot-autoconfigure</artifactId>
+            <version>${audit-log.version}</version>
+            <classifier>tests</classifier>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
