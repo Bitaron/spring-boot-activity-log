@@ -1,9 +1,12 @@
 package io.github.bitaron.auditlog.server;
 
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import java.io.IOException;
 
 /**
  * Translates caller-error exceptions into {@code 400 Bad Request} - without this, Spring MVC's
@@ -18,13 +21,23 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  *   (e.g. the {@code X-TENANT-ID} header is missing) - the caller's request is what's incomplete,
  *   even though the check itself lives on the query service rather than the controller.</li>
  * </ul>
+ * <p>
+ * Writes directly to {@link HttpServletResponse} rather than returning a {@code String} for Spring
+ * MVC's usual content-negotiated rendering - {@code AuditLogHttpClient} (WP17's typed exception
+ * hierarchy, in {@code audit-log-java-client}) always sends {@code Accept: application/x-protobuf},
+ * which no converter can satisfy for a plain-text error body; letting content negotiation own this
+ * response turned every 400 this handler was meant to produce for a protobuf-only client into an
+ * uncaught {@code HttpMediaTypeNotAcceptableException}, surfacing as an unhelpful {@code 500}
+ * instead. Caught empirically writing {@code AuditLogHttpClientErrorHandlingTest}.
  */
 @RestControllerAdvice
 public class AuditServerExceptionHandler {
 
     @ExceptionHandler({IllegalArgumentException.class, IllegalStateException.class})
-    @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public String handleCallerError(RuntimeException e) {
-        return e.getMessage();
+    public void handleCallerError(RuntimeException e, HttpServletResponse response) throws IOException {
+        response.setStatus(HttpStatus.BAD_REQUEST.value());
+        response.setContentType(MediaType.TEXT_PLAIN_VALUE);
+        response.getWriter().write(e.getMessage() == null ? "" : e.getMessage());
+        response.getWriter().flush();
     }
 }

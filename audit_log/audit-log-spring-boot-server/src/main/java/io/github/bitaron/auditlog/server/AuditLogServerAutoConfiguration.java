@@ -81,6 +81,25 @@ public class AuditLogServerAutoConfiguration {
     }
 
     /**
+     * {@code @RestControllerAdvice} is a component-scanning stereotype - without registering it as
+     * a bean explicitly here, whether it's ever picked up depends entirely on whether the host
+     * application's own {@code @SpringBootApplication} base package happens to cover
+     * {@code io.github.bitaron.auditlog.server}. Every one of this module's own tests before WP17
+     * had a {@code TestServerApplication}/{@code ClientTestServerApplication} that either did (and
+     * so passed by coincidence) or never exercised a caller-error path at all - a real host
+     * application's base package essentially never overlaps with this library's, so every
+     * {@link IllegalArgumentException}/{@link IllegalStateException} this module's controllers
+     * throw would silently surface as an unhelpful {@code 500} instead of the documented
+     * {@code 400}. Caught empirically writing {@code AuditLogHttpClientErrorHandlingTest}, whose
+     * {@code ClientTestServerApplication} lives in {@code io.github.bitaron.auditlog.client}.
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public AuditServerExceptionHandler auditServerExceptionHandler() {
+        return new AuditServerExceptionHandler();
+    }
+
+    /**
      * Fails startup rather than running unauthenticated/unscoped when this module is enabled with
      * no per-tenant keys configured, or with the core starter's tenant-scoped read enforcement
      * turned off. The latter check exists because per-tenant API keys only actually confine each
