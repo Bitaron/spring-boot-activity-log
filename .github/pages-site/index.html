@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>audit-log</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header">
+    <span class="title">audit-log</span>
+    <span class="subtitle">Spring Boot audit trail starter - docs hub</span>
+    <nav>
+        <a href="https://github.com/Bitaron/spring-boot-activity-log">GitHub</a>
+        <a href="apidocs/index.html">Javadoc</a>
+        <a href="swagger/index.html">REST API</a>
+    </nav>
+</header>
+<main>
+    <section class="section">
+        <h2>Start here</h2>
+        <div class="grid">
+            <a class="card" href="docs.html?file=README.md">
+                <div class="card-title">Getting started</div>
+                <div class="card-desc">Quick-start dependency, first <code>@Audit</code> annotation, build/run instructions.</div>
+            </a>
+            <a class="card" href="docs.html?file=MIGRATION.md">
+                <div class="card-title">Migration guide</div>
+                <div class="card-desc">1.x &rarr; 2.x API/schema mapping, plus every additive feature since, with config properties.</div>
+            </a>
+            <a class="card" href="docs.html?file=docs%2FCONFIGURATION.md">
+                <div class="card-title">Configuration reference</div>
+                <div class="card-desc">Every <code>audit.log.*</code> property, grouped by module, with type/default/description.</div>
+            </a>
+        </div>
+    </section>
+
+    <section class="section">
+        <h2>API reference</h2>
+        <div class="grid">
+            <a class="card" href="apidocs/index.html">
+                <span class="badge">Library</span>
+                <div class="card-title">Java API (Javadoc)</div>
+                <div class="card-desc">Aggregated Javadoc across every published module - annotations, SPIs, <code>AuditLogRecorder</code>, <code>AuditLogQueryService</code>, and the rest of the public surface.</div>
+            </a>
+            <a class="card" href="swagger/index.html">
+                <span class="badge">Server</span>
+                <div class="card-title">REST API (Swagger UI)</div>
+                <div class="card-desc">Interactive OpenAPI spec for <code>audit-log-spring-boot-server</code>'s three endpoints, hand-maintained against the wire schema.</div>
+            </a>
+            <a class="card" href="https://github.com/Bitaron/spring-boot-activity-log/blob/main/audit_log/audit-log-server-proto/src/main/proto/auditlog/v1/audit_event.proto">
+                <span class="badge">Server</span>
+                <div class="card-title">gRPC API (.proto)</div>
+                <div class="card-desc">The same wire messages plus <code>service AuditLogService</code> (Ingest/Query/QueryAfter) - source of truth for both the REST and gRPC servers.</div>
+            </a>
+            <a class="card" href="docs.html?file=docs%2FCLIENT_CODEGEN.md">
+                <div class="card-title">Client codegen guide</div>
+                <div class="card-desc">Generate a typed client for either server, in any language <code>protoc</code> supports.</div>
+            </a>
+        </div>
+    </section>
+
+    <section class="section">
+        <h2>Operating at scale</h2>
+        <div class="grid">
+            <a class="card" href="docs.html?file=docs%2FSCALING.md">
+                <div class="card-title">Scaling guide</div>
+                <div class="card-desc">Offset vs. keyset pagination, retention, the <code>IDENTITY</code>-batching limitation, table partitioning.</div>
+            </a>
+        </div>
+    </section>
+
+    <section class="section">
+        <h2>Design &amp; history</h2>
+        <div class="grid">
+            <a class="card" href="docs.html?file=AGENTS.md">
+                <div class="card-title">AGENTS.md</div>
+                <div class="card-desc">Dense, agent-facing spec: module map, package/class map, build commands, load-bearing conventions.</div>
+            </a>
+            <a class="card" href="docs.html?file=HANDOFF.md">
+                <div class="card-title">HANDOFF.md</div>
+                <div class="card-desc">Narrative record of what was built, in what order, and why - the rationale behind every non-obvious decision.</div>
+            </a>
+        </div>
+    </section>
+</main>
+<footer class="site-footer">
+    Generated from <a href="https://github.com/Bitaron/spring-boot-activity-log">Bitaron/spring-boot-activity-log</a>
+    by <code>.github/workflows/pages.yml</code> on every push to <code>main</code>.
+</footer>
+</body>
+</html>

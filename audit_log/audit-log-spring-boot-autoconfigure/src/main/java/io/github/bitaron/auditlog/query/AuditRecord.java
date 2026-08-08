@@ -27,6 +27,16 @@ public record AuditRecord(
         Long durationMs,
         String traceId,
         String data,
-        Long groupId
+        Long groupId,
+        String tenantId
 ) {
+    /**
+     * The {@link AuditCursor} marking "everything strictly after this row" for
+     * {@link AuditLogQueryService#findAfter} - equivalent to
+     * {@code new AuditCursor(createdAt(), id())}, but named for the common case of paging through
+     * results one page at a time: {@code AuditCursor next = results.get(results.size() - 1).toCursor();}
+     */
+    public AuditCursor toCursor() {
+        return new AuditCursor(createdAt, id);
+    }
 }

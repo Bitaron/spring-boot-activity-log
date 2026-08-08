@@ -280,6 +280,37 @@
                     </execution>
                 </executions>
             </plugin>
+            <!--
+                Publishes io.github.bitaron.auditlog.testsupport (WP17) as this module's "tests"
+                classifier - a consuming application's tests can then assert an audit record was
+                written through AuditLogQueryService instead of hand-rolling raw JPQL/EntityManager
+                calls. Scoped via <includes> to that one package: not the whole internal test suite
+                (testfixtures/, the *Test.java classes themselves), which is scaffolding for this
+                module's own tests, not published API.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.2</version>
+                <executions>
+                    <execution>
+                        <id>attach-test-jar</id>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                        <configuration>
+                            <includes>
+                                <include>io/github/bitaron/auditlog/testsupport/**</include>
+                            </includes>
+                            <excludes>
+                                <!-- This module's own test of the helper, not part of what a
+                                     consumer depending on the "tests" classifier should get. -->
+                                <exclude>io/github/bitaron/auditlog/testsupport/AuditLogAssertionsTest.class</exclude>
+                            </excludes>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 

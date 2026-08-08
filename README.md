@@ -6,6 +6,20 @@ Spring Boot starter that records audit trail entries for `@Audit`-annotated meth
 [`MIGRATION.md`](MIGRATION.md) if you're upgrading from `1.x`, or
 [`AGENTS.md`](AGENTS.md) if you're a coding agent about to make a change here.
 
+## Documentation
+
+| | |
+|---|---|
+| **Docs site** | https://bitaron.github.io/spring-boot-activity-log/ - a hub linking everything below in one place (aggregated Javadoc, the REST server's Swagger UI, and every Markdown doc, rendered). Built by [`.github/workflows/pages.yml`](.github/workflows/pages.yml) on every push to `main`; see that workflow's header comment for the one-time repository setting it needs. |
+| **Library API** | Each module's own README (linked under "Modules" below) plus generated Javadoc - `mvn -f audit_log/pom.xml org.apache.maven.plugins:maven-javadoc-plugin:3.8.0:aggregate` builds it locally at `audit_log/target/site/apidocs/index.html`. |
+| **REST server API** | [Swagger UI](audit_log/audit-log-spring-boot-server/README.md#api-docs-swagger-ui) - bundled into `audit-log-spring-boot-server` itself, served at `/swagger-ui/index.html` on any running instance (see the docs site for a static copy). Spec source: [`audit-log-server-openapi.yaml`](audit_log/audit-log-spring-boot-server/src/main/resources/static/openapi/audit-log-server-openapi.yaml). |
+| **gRPC server API** | [`audit_event.proto`](audit_log/audit-log-server-proto/src/main/proto/auditlog/v1/audit_event.proto) (the `AuditLogService` block) plus [`audit-log-spring-boot-grpc-server/README.md`](audit_log/audit-log-spring-boot-grpc-server/README.md). |
+| **Configuration** | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) - every `audit.log.*` property, in one place. |
+| **Migrating / what's new** | [`MIGRATION.md`](MIGRATION.md) |
+| **Design decisions & history** | [`AGENTS.md`](AGENTS.md) (dense, agent-facing spec) and [`HANDOFF.md`](HANDOFF.md) (narrative rationale) |
+| **Scaling** | [`docs/SCALING.md`](docs/SCALING.md) |
+| **Client codegen (any language)** | [`docs/CLIENT_CODEGEN.md`](docs/CLIENT_CODEGEN.md) |
+
 ## Quick start
 
 ```xml
@@ -26,8 +40,8 @@ That's it - every invocation of an `@Audit`-annotated method now produces one `a
 (`outcome`, `duration_ms`, actor/client fields, and any rendered `templates`), dispatched
 asynchronously and deferred until the caller's transaction commits by default. See the
 [full usage guide](audit_log/audit-log-spring-boot-autoconfigure/README.md) for actor resolution,
-delivery-mode control, reading records back, retention, and the optional REST server for non-JVM
-callers.
+delivery-mode control, reading records back, retention, and the optional REST/gRPC servers for
+non-JVM callers.
 
 ## Build
 
@@ -38,8 +52,15 @@ internals - see the comment in `pom.xml` for details. Revisit once Lombok catche
 mvn clean install
 ```
 
-This builds the starter, installs it to the local Maven repository, then builds the demo app
-against that local build (not a published release).
+This builds the starter, installs it to the local Maven repository, then builds the demo app and
+the standalone server app (below) against that local build (not a published release).
+
+To build **just the library jars** - installable to a local repo, or publishable, for use as a
+dependency in any Spring Boot app - without the demo/standalone apps:
+
+```bash
+mvn -f audit_log/pom.xml clean install
+```
 
 ## Run the demo
 
@@ -62,6 +83,22 @@ Inspect the database live at `http://localhost:8080/h2-console` (JDBC URL
 For a realistic run against PostgreSQL instead: `docker compose up -d` in
 `audit_log_usage_example`, then `mvn spring-boot:run -Dspring-boot.run.profiles=postgres`.
 
+## Run the REST server standalone
+
+`audit_log/audit-log-spring-boot-server` is a pure library (no main class) - `audit_log_standalone_server`
+is the runnable app around it, for a caller with no in-process JVM to depend on the library from:
+
+```bash
+AUDIT_LOG_SERVER_APIKEYS_DEFAULT=<your-secret> mvn -f audit_log_standalone_server/pom.xml spring-boot:run
+```
+
+`audit.log.server.api-keys.<tenantId>` has no default - the app fails fast at startup if none is
+configured, since there's no safe default that leaves the ingest/query endpoints open. Each key
+authenticates exactly one tenant; `default` is this app's out-of-the-box tenant id, chosen because
+it has no dashes/dots (Spring's relaxed environment-variable binding can't always map a `Map` key
+that does). See [its README](audit_log_standalone_server/README.md) for the Postgres profile, a
+curl smoke test, and running more than one tenant.
+
 ## Modules
 
 - **`audit_log/audit-log-spring-boot-autoconfigure`** - the auto-configuration and implementation.
@@ -71,16 +108,26 @@ For a realistic run against PostgreSQL instead: `docker compose up -d` in
   applications should actually depend on (pulls in the autoconfigure module plus
   `spring-boot-starter-aop`).
 - **`audit_log/audit-log-server-proto`** - the Protobuf (`.proto`) wire schema and generated Java
-  stubs for the REST server module below, with no Spring dependency of its own. See
-  [`docs/CLIENT_CODEGEN.md`](docs/CLIENT_CODEGEN.md) to generate a client in any language directly
-  from the schema.
+  stubs (Protobuf messages plus, as of WP18, a gRPC service) for the REST and gRPC server modules
+  below, with no Spring dependency of its own. See [`docs/CLIENT_CODEGEN.md`](docs/CLIENT_CODEGEN.md)
+  to generate a client in any language directly from the schema.
 - **`audit_log/audit-log-spring-boot-server`** - an optional REST ingestion/query server
   (`POST /audit-log/events`, `GET /audit-log/records`) for callers with no `@Audit`-annotated
   method invocation to intercept. Off by default - see `audit.log.server.*` properties in
   [`MIGRATION.md`](MIGRATION.md).
-- **`audit_log/audit-log-java-client`** - a typed Java HTTP client for the server module above.
+- **`audit_log/audit-log-spring-boot-grpc-server`** - the gRPC equivalent (WP18), same three
+  operations on the same wire messages, for callers that prefer gRPC over REST. Off by default -
+  see [its README](audit_log/audit-log-spring-boot-grpc-server/README.md) and `audit.log.grpc.*`
+  properties in [`MIGRATION.md`](MIGRATION.md). Cannot be enabled in the same application as
+  `audit-log-spring-boot-server`.
+- **`audit_log/audit-log-java-client`** - a typed Java HTTP client for the REST server module
+  above, and **`audit_log/audit-log-java-client-spring-boot-starter`** - its optional Spring Boot
+  auto-config, registering an `AuditLogHttpClient` bean from `audit.log.client.*` properties.
 - **`audit_log_usage_example`** - a minimal Spring Boot app wiring the starter in, used both as a
   runnable demo and as an integration test target (`mvn test` in that module).
+- **`audit_log_standalone_server`** - the runnable standalone deployment of
+  `audit-log-spring-boot-server`, for a caller with no in-process JVM to depend on the library
+  from. H2 by default, `postgres` profile available; see [its README](audit_log_standalone_server/README.md).
 
 For large-data operation (pagination at scale, retention, table partitioning) see
 [`docs/SCALING.md`](docs/SCALING.md).

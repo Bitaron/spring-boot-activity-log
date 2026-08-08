@@ -14,7 +14,7 @@
     <artifactId>audit-log-server-proto</artifactId>
     <name>${project.groupId}:${project.artifactId}</name>
     <packaging>jar</packaging>
-    <description>Protobuf IDL and generated Java stubs for the audit-log REST server's wire format. Depend on this module directly for typed Java request/response classes with no Spring dependency - see docs/CLIENT_CODEGEN.md at the repository root for generating clients in other languages from the same .proto file.</description>
+    <description>Protobuf IDL and generated Java stubs for the audit-log REST/gRPC servers' wire format. Depend on this module directly for typed Java request/response classes with no Spring dependency - see docs/CLIENT_CODEGEN.md at the repository root for generating clients in other languages from the same .proto file.</description>
     <url>https://github.com/Bitaron/spring-boot-activity-log</url>
 
     <licenses>
@@ -56,6 +56,30 @@
             <artifactId>protobuf-java</artifactId>
             <version>${protobuf.version}</version>
         </dependency>
+        <!-- WP18: grpc-java codegen (see the protobuf-maven-plugin "compile-custom" execution
+             below) needs these two at compile+runtime for the generated AuditLogServiceGrpc stub/
+             base classes to resolve - grpc-netty-shaded (the actual server transport) is deferred
+             to audit-log-spring-boot-grpc-server, not pulled in here, so a consumer only wanting
+             the generated message/stub types (e.g. for a client, or the REST server which has no
+             use for grpc runtime types at all) doesn't get an unused Netty dependency. -->
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-stub</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-protobuf</artifactId>
+        </dependency>
+        <!-- grpc-stub's generated code (AuditLogServiceGrpc) references javax.annotation.Generated
+             at compile time - removed from the JDK entirely at JDK11+, so it needs a real
+             dependency now rather than assuming it's still on the bootclasspath. Compile-only:
+             nothing at runtime reads this annotation. -->
+        <dependency>
+            <groupId>org.apache.tomcat</groupId>
+            <artifactId>annotations-api</artifactId>
+            <version>6.0.53</version>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -88,11 +112,18 @@
                 <version>0.6.1</version>
                 <configuration>
                     <protocArtifact>com.google.protobuf:protoc:${protobuf.version}:exe:${os.detected.classifier}</protocArtifact>
+                    <!-- WP18: generates AuditLogServiceGrpc (stub + ImplBase) alongside the message
+                         classes the "compile" execution below already produces, from the same
+                         audit_event.proto - a second protoc codegen plugin (protoc-gen-grpc-java),
+                         resolved the same prebuilt-binary way protoc itself is. -->
+                    <pluginId>grpc-java</pluginId>
+                    <pluginArtifact>io.grpc:protoc-gen-grpc-java:${grpc.version}:exe:${os.detected.classifier}</pluginArtifact>
                 </configuration>
                 <executions>
                     <execution>
                         <goals>
                             <goal>compile</goal>
+                            <goal>compile-custom</goal>
                         </goals>
                     </execution>
                 </executions>

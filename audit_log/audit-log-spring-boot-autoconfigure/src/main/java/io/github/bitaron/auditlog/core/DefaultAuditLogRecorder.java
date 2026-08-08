@@ -47,7 +47,8 @@ public class DefaultAuditLogRecorder implements AuditLogRecorder {
                 request.exceptionThrown() ? request.exception() : null,
                 request.exceptionThrown(),
                 request.durationMillis(),
-                request.traceId());
+                request.traceId(),
+                request.tenantId());
         auditLogger.log(audit, context);
     }
 

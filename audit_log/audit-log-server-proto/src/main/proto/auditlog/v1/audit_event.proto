@@ -45,6 +45,11 @@ message AuditEventRequest {
   bool exception_thrown = 14;
   int64 duration_millis = 15;
   string trace_id = 16;
+  // Caller-supplied, like actor_id - same trust level as this endpoint's shared-API-key auth
+  // model (see ApiKeyAuthFilter). Only enforced (400 if blank) when the server is configured with
+  // audit.log.server.multi-tenancy.required=true; otherwise optional, same as every other field
+  // here.
+  string tenant_id = 17;
 }
 
 // POST /audit-log/events response. The write itself follows the configured delivery mode
@@ -78,10 +83,17 @@ message AuditRecordProto {
   string trace_id = 13;
   string data = 14;
   int64 group_id = 15;
+  string tenant_id = 16;
 }
 
 // GET /audit-log/records query parameters, mapped by the controller - not sent as a message body,
 // but grouped here as the typed shape of the accepted query parameters for client codegen.
+//
+// Deliberately has no tenant_id field: under this server's single-shared-API-key auth model, a
+// caller-suppliable tenant filter on reads would let any holder of that one key request any other
+// tenant's data by changing a query parameter. Reads are instead scoped server-side, ambiently, by
+// whatever AuditTenantResolver is active for the request (see JpaAuditLogQueryService) - not by
+// anything the client sends here.
 message AuditQueryRequest {
   string actor_id = 1;
   string audit_type = 2;
@@ -96,4 +108,42 @@ message AuditQueryResponse {
   int64 total_elements = 2;
   int32 page = 3;
   int32 size = 4;
+}
+
+// GET /audit-log/records/after query parameters (WP17) - keyset pagination, mirroring
+// AuditLogQueryService#findAfter. cursor_created_at empty (together with cursor_id unset/0) means
+// "first page", the same "empty string = unset" convention AuditQueryRequest above uses. Same
+// deliberate omission of tenant_id as AuditQueryRequest, and for the same reason: reads are scoped
+// server-side by whichever AuditTenantResolver is active, never by anything the client sends here.
+message AuditCursorQueryRequest {
+  string actor_id = 1;
+  string audit_type = 2;
+  string created_at_from = 3;
+  string created_at_to = 4;
+  string cursor_created_at = 5;
+  int64 cursor_id = 6;
+  int32 limit = 7;
+}
+
+message AuditCursorQueryResponse {
+  repeated AuditRecordProto records = 1;
+}
+
+// gRPC equivalent of the REST server's three endpoints (WP18), reusing every message above
+// unchanged - unlike REST, a gRPC RPC always has one typed request message, so AuditQueryRequest/
+// AuditCursorQueryRequest (originally just documentation of the REST query-parameter shape, per
+// their own comments above) are the literal wire request here, not merely a typed description of
+// one. Same authentication model as the REST server: a per-tenant API key presented via the
+// "x-api-key" metadata entry (see audit-log-spring-boot-grpc-server's ApiKeyGrpcServerInterceptor)
+// - never a caller-suppliable tenant_id/tenant field on any of these messages, for the identical
+// reason AuditQueryRequest/AuditCursorQueryRequest already document.
+service AuditLogService {
+  // Mirrors POST /audit-log/events. The persisted tenant is always the one the API key
+  // authenticated - a request naming a different tenant_id is rejected (INVALID_ARGUMENT), not
+  // silently overridden. See AuditIngestController's javadoc for the identical REST-side rule.
+  rpc Ingest(AuditEventRequest) returns (AuditEventResponse);
+  // Mirrors GET /audit-log/records.
+  rpc Query(AuditQueryRequest) returns (AuditQueryResponse);
+  // Mirrors GET /audit-log/records/after - keyset ("seek") pagination, see docs/SCALING.md.
+  rpc QueryAfter(AuditCursorQueryRequest) returns (AuditCursorQueryResponse);
 }

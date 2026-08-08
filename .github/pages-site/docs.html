@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>audit-log docs</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site-header">
+    <span class="title"><a href="index.html">audit-log</a></span>
+    <span class="subtitle" id="doc-title"></span>
+    <nav>
+        <a id="source-link" href="#">View source on GitHub</a>
+        <a href="index.html">Hub</a>
+    </nav>
+</header>
+<main>
+    <div id="doc-status">Loading…</div>
+    <article class="markdown-body" id="content"></article>
+</main>
+<footer class="site-footer">
+    Rendered client-side from this repository's own Markdown - the file itself is the source of truth.
+</footer>
+
+<!-- Client-side Markdown rendering keeps the build step trivial (copy .md files verbatim into the
+     site output; no server-side rendering pipeline to maintain). marked is loaded from a CDN and
+     only ever renders this repository's own first-party Markdown files (never user input), so
+     sanitizing the output isn't necessary here. -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+    (function () {
+        var params = new URLSearchParams(window.location.search);
+        var file = params.get("file") || "README.md";
+        // Guard against an unexpected ?file= value escaping the site's own doc set.
+        if (file.indexOf("..") !== -1 || file.indexOf("://") !== -1 || file.charAt(0) === "/") {
+            document.getElementById("doc-status").textContent = "Invalid file parameter.";
+            return;
+        }
+
+        document.getElementById("doc-title").textContent = file;
+        document.title = file + " - audit-log docs";
+        document.getElementById("source-link").href =
+            "https://github.com/Bitaron/spring-boot-activity-log/blob/main/" + file;
+
+        fetch(file)
+            .then(function (response) {
+                if (!response.ok) {
+                    throw new Error(response.status + " " + response.statusText);
+                }
+                return response.text();
+            })
+            .then(function (markdown) {
+                document.getElementById("content").innerHTML = marked.parse(markdown);
+                document.getElementById("doc-status").remove();
+                // Rewrite same-repo relative .md links to route back through this viewer instead
+                // of 404ing (this page has no server-side router, just ?file=).
+                document.querySelectorAll("#content a[href$='.md']").forEach(function (a) {
+                    var href = a.getAttribute("href");
+                    if (href.indexOf("://") === -1) {
+                        a.setAttribute("href", "docs.html?file=" + encodeURIComponent(href));
+                    }
+                });
+            })
+            .catch(function (err) {
+                document.getElementById("doc-status").textContent =
+                    "Could not load " + file + ": " + err.message;
+            });
+    })();
+</script>
+</body>
+</html>

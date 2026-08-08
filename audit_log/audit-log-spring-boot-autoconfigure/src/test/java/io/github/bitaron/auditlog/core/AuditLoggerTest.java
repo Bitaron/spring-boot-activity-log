@@ -34,7 +34,7 @@ class AuditLoggerTest {
     private final AuditMetricsRecorder metrics = mock(AuditMetricsRecorder.class);
     private final Audit audit = fixtureAudit();
     private final AuditContext clientData = new AuditContext(
-            null, null, null, null, null, null, null, null, false, 0, null);
+            null, null, null, null, null, null, null, null, false, 0, null, null);
 
     @AfterEach
     void clearSynchronization() {

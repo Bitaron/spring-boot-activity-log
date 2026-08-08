@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+        Own spring-boot-starter-parent, not the audit_log/pom.xml aggregator - same shape as the
+        sibling audit_log_usage_example module. This is a runnable *app* (the reference standalone
+        deployment of the optional REST server), not another library in the io.github.bitaron
+        2.0.0-SNAPSHOT release train the aggregator's dependencyManagement exists to serve, so it
+        gets its own version and gets spring-boot-maven-plugin's version/defaults for free from
+        spring-boot-starter-parent's pluginManagement instead of hand-declaring just that one
+        plugin's version against the aggregator. Trade-off, already accepted by the demo app today:
+        spring-boot.version/java.version below are duplicated literals, not inherited from the root
+        pom's properties.
+
+        groupId stays io.github.bitaron (unlike the demo app's com.commlink) - this module is
+        official project infrastructure (the reference deployment of the library's own optional
+        server component), not a roleplay of an external adopter.
+    -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.5.16</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>io.github.bitaron</groupId>
+    <artifactId>audit-log-standalone-server</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+    <name>${project.groupId}:${project.artifactId}</name>
+    <description>
+        Runnable standalone deployment of audit-log-spring-boot-server, for a caller with no
+        in-process JVM to depend on the library from - build once, run the jar. Never published;
+        see audit_log/pom.xml for the library modules that are.
+    </description>
+
+    <properties>
+        <!-- Matches the parent aggregator's java.version - see ../pom.xml for why 21 (LTS) rather
+             than 25: Lombok doesn't yet support the JDK 25 compiler internals. -->
+        <java.version>21</java.version>
+        <!-- Kept in lockstep with the sibling audit_log/pom.xml aggregator version. -->
+        <audit-log.version>2.0.0-SNAPSHOT</audit-log.version>
+    </properties>
+
+    <dependencies>
+        <!--
+            Brings audit-log-spring-boot-starter (-> autoconfigure + spring-boot-starter-aop),
+            audit-log-server-proto, protobuf-java-util, spring-boot-starter-web and
+            spring-boot-autoconfigure transitively - see audit_log/audit-log-spring-boot-server/pom.xml.
+        -->
+        <dependency>
+            <groupId>io.github.bitaron</groupId>
+            <artifactId>audit-log-spring-boot-server</artifactId>
+            <version>${audit-log.version}</version>
+        </dependency>
+        <!--
+            spring-tx/spring-orm/hibernate-core/spring-data-commons are all "provided" in
+            audit-log-spring-boot-autoconfigure's own pom, so none of them flow transitively through
+            audit-log-spring-boot-server above - needed directly here for this app's JPA context to
+            actually start, exactly like audit_log_usage_example needs the same for the core starter.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <!-- Default database: in-memory, zero setup. See application.properties. -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <!-- For a realistic, persistent run, activate the "postgres" Spring profile; see
+             application-postgres.properties and docker-compose.yml. -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

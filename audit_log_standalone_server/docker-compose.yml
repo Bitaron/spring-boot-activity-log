@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: auditlogserver
+      POSTGRES_USER: auditlogserver
+      POSTGRES_PASSWORD: auditlogserver
+    ports:
+      - "5432:5432"
+    volumes:
+      - auditlogserver-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  auditlogserver-postgres-data:

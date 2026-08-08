@@ -18,4 +18,34 @@ public record AuditQuery(String actorId, String auditType, LocalDateTime created
     public static AuditQuery all() {
         return new AuditQuery(null, null, null, null);
     }
+
+    /** Filters to a single actor, with every other field unfiltered. */
+    public static AuditQuery byActor(String actorId) {
+        return new AuditQuery(actorId, null, null, null);
+    }
+
+    /** Filters to a single audit type, with every other field unfiltered. */
+    public static AuditQuery byType(String auditType) {
+        return new AuditQuery(null, auditType, null, null);
+    }
+
+    /** Filters to a single actor and audit type, with the created-at range unfiltered. */
+    public static AuditQuery byActorAndType(String actorId, String auditType) {
+        return new AuditQuery(actorId, auditType, null, null);
+    }
+
+    /** Returns a copy of this query with {@code createdAtFrom}/{@code createdAtTo} replaced. */
+    public AuditQuery withCreatedBetween(LocalDateTime createdAtFrom, LocalDateTime createdAtTo) {
+        return new AuditQuery(actorId, auditType, createdAtFrom, createdAtTo);
+    }
+
+    /** Returns a copy of this query with {@code actorId} replaced. */
+    public AuditQuery withActor(String actorId) {
+        return new AuditQuery(actorId, auditType, createdAtFrom, createdAtTo);
+    }
+
+    /** Returns a copy of this query with {@code auditType} replaced. */
+    public AuditQuery withType(String auditType) {
+        return new AuditQuery(actorId, auditType, createdAtFrom, createdAtTo);
+    }
 }

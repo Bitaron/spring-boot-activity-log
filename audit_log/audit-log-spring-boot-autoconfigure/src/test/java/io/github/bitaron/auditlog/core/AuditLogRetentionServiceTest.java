@@ -53,9 +53,9 @@ class AuditLogRetentionServiceTest {
             // 5 old rows (older than the 30-day cutoff, batch size 2 -> 3 batches) each with one
             // child message, plus 1 recent row that must survive.
             for (int i = 0; i < 5; i++) {
-                seedAuditLog(context, now.minusDays(60), true);
+                seedAuditLog(context, now.minusDays(60), true, null);
             }
-            Long survivingId = seedAuditLog(context, now.minusDays(1), true);
+            Long survivingId = seedAuditLog(context, now.minusDays(1), true, null);
 
             AuditLogRetentionService retentionService = context.getBean(AuditLogRetentionService.class);
             retentionService.runOnce();
@@ -70,10 +70,36 @@ class AuditLogRetentionServiceTest {
         });
     }
 
+    /**
+     * WP16 acceptance: a tenant with a shorter {@code retention.tenant-max-age} override is purged
+     * to its own, tighter cutoff, while another tenant (and the no-tenant/legacy case) keeps
+     * following the global {@code retention.max-age} - one tenant's retention policy never
+     * over- or under-purges another's data.
+     */
+    @Test
+    void perTenantMaxAgeOverridesOnlyPurgeThatTenantToItsOwnCutoff() {
+        contextRunner.withPropertyValues("audit.log.retention.tenant-max-age.short-lived=P5D")
+                .run(context -> {
+                    LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+                    // 10 days old: older than short-lived's 5-day override (purged), but newer than
+                    // the global 30-day default (survives for every other tenant/no-tenant).
+                    Long shortLivedId = seedAuditLog(context, now.minusDays(10), false, "short-lived");
+                    Long longLivedId = seedAuditLog(context, now.minusDays(10), false, "long-lived");
+                    Long noTenantId = seedAuditLog(context, now.minusDays(10), false, null);
+
+                    context.getBean(AuditLogRetentionService.class).runOnce();
+
+                    List<Long> remainingIds = findAllLogs(context).stream().map(AuditLog::getId).toList();
+                    assertThat(remainingIds).doesNotContain(shortLivedId);
+                    assertThat(remainingIds).contains(longLivedId, noTenantId);
+                });
+    }
+
     /** Seeds one {@link AuditLog} row (and, if requested, one child message) with an explicit
-     * {@code createdAt}, bypassing {@link AuditLogWriter} (which always stamps {@code now()}) so
-     * the retention cutoff can actually be exercised. Returns the persisted row's id. */
-    private Long seedAuditLog(ApplicationContext context, LocalDateTime createdAt, boolean withMessage) {
+     * {@code createdAt} and tenant, bypassing {@link AuditLogWriter} (which always stamps
+     * {@code now()}) so the retention cutoff can actually be exercised. Returns the persisted
+     * row's id. */
+    private Long seedAuditLog(ApplicationContext context, LocalDateTime createdAt, boolean withMessage, String tenantId) {
         PlatformTransactionManager transactionManager = context.getBean(PlatformTransactionManager.class);
         return new TransactionTemplate(transactionManager).execute(status -> {
             EntityManager entityManager = context.getBean(EntityManager.class);
@@ -81,6 +107,7 @@ class AuditLogRetentionServiceTest {
             auditLog.setAuditType("test");
             auditLog.setCreatedAt(createdAt);
             auditLog.setOutcome(AuditOutcome.SUCCESS);
+            auditLog.setTenantId(tenantId);
             entityManager.persist(auditLog);
             if (withMessage) {
                 AuditLogMessage message = new AuditLogMessage();

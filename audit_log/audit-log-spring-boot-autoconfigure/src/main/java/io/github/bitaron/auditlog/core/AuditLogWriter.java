@@ -77,7 +77,7 @@ public class AuditLogWriter {
 
         List<AuditLogMessage> messages = new ArrayList<>();
         for (String templateName : templateNames) {
-            Optional<String> templateContent = findTemplate(templateName);
+            Optional<String> templateContent = findTemplate(auditContext.tenantId(), templateName);
             if (templateContent.isEmpty()) {
                 log.warn("@Audit references template \"{}\" but no configured AuditTemplateSource resolves it; skipping it",
                         templateName);
@@ -114,8 +114,9 @@ public class AuditLogWriter {
         auditLog.setOutcome(auditContext.exceptionThrown() ? AuditOutcome.FAILURE : AuditOutcome.SUCCESS);
         auditLog.setDurationMs(auditContext.durationMillis());
         auditLog.setTraceId(auditContext.traceId());
+        auditLog.setTenantId(auditContext.tenantId());
         auditLog.setData(serializeData(auditContext));
-        auditLog.setGroupId(resolveGroupId(audit));
+        auditLog.setGroupId(resolveGroupId(audit, auditContext.tenantId()));
         return auditLog;
     }
 
@@ -127,9 +128,9 @@ public class AuditLogWriter {
     }
 
     /** Tries every configured {@link AuditTemplateSource} in order, returning the first hit. */
-    private Optional<String> findTemplate(String name) {
+    private Optional<String> findTemplate(String tenantId, String name) {
         for (AuditTemplateSource source : auditTemplateSources) {
-            Optional<String> template = source.findTemplate(name);
+            Optional<String> template = source.findTemplate(tenantId, name);
             if (template.isPresent()) {
                 return template;
             }
@@ -152,19 +153,28 @@ public class AuditLogWriter {
         }
     }
 
-    /** The reuse-by-name is why {@link AuditGroup}'s name column has a unique constraint. */
-    private Long resolveGroupId(Audit audit) {
+    /**
+     * The reuse-by-name is why {@link AuditGroup}'s {@code (tenant_id, name)} pair has a unique
+     * constraint. Tenant-scoped (WP16): {@code tenantId} is normalized to
+     * {@link AuditGroup#GLOBAL_TENANT_ID} (never left {@code null}) before querying/persisting -
+     * see that class's javadoc for why a real sentinel value is used here instead of the
+     * {@code null}-based convention {@code AuditLog.tenantId} uses.
+     */
+    private Long resolveGroupId(Audit audit, String tenantId) {
         if (audit.groupName().isEmpty()) {
             return null;
         }
+        String normalizedTenantId = tenantId == null ? AuditGroup.GLOBAL_TENANT_ID : tenantId;
         try {
             TypedQuery<Long> query = entityManager.createQuery(
-                    "select g.id from AuditGroup g where g.name = :name", Long.class);
+                    "select g.id from AuditGroup g where g.name = :name and g.tenantId = :tenantId", Long.class);
             query.setParameter("name", audit.groupName());
+            query.setParameter("tenantId", normalizedTenantId);
             return query.getSingleResult();
         } catch (NoResultException e) {
             AuditGroup auditGroup = new AuditGroup();
             auditGroup.setName(audit.groupName());
+            auditGroup.setTenantId(normalizedTenantId);
             entityManager.persist(auditGroup);
             return auditGroup.getId();
         }

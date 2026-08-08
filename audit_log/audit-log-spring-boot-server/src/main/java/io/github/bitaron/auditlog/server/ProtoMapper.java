@@ -3,6 +3,7 @@ package io.github.bitaron.auditlog.server;
 import io.github.bitaron.auditlog.entity.AuditOutcome;
 import io.github.bitaron.auditlog.model.AuditEventRequest;
 import io.github.bitaron.auditlog.query.AuditRecord;
+import io.github.bitaron.auditlog.server.proto.v1.AuditCursorQueryResponse;
 import io.github.bitaron.auditlog.server.proto.v1.AuditEventResponse;
 import io.github.bitaron.auditlog.server.proto.v1.AuditOutcomeProto;
 import io.github.bitaron.auditlog.server.proto.v1.AuditQueryResponse;
@@ -25,7 +26,14 @@ final class ProtoMapper {
     private ProtoMapper() {
     }
 
-    static AuditEventRequest toEventRequest(io.github.bitaron.auditlog.server.proto.v1.AuditEventRequest proto) {
+    /**
+     * @param tenantId the authenticated tenant (WP16) - not read from {@code proto.getTenantId()}
+     * here; {@link AuditIngestController} already validated the wire value (if any) against this
+     * before calling in, so this parameter is the single source of truth for the resulting
+     * domain object's tenant
+     */
+    static AuditEventRequest toEventRequest(io.github.bitaron.auditlog.server.proto.v1.AuditEventRequest proto,
+                                              String tenantId) {
         return new AuditEventRequest(
                 proto.getAuditType(),
                 proto.getActionName(),
@@ -42,7 +50,8 @@ final class ProtoMapper {
                 emptyToNull(proto.getExceptionJson()),
                 proto.getExceptionThrown(),
                 proto.getDurationMillis(),
-                emptyToNull(proto.getTraceId()));
+                emptyToNull(proto.getTraceId()),
+                tenantId);
     }
 
     static AuditEventResponse toEventResponse(boolean accepted) {
@@ -65,6 +74,7 @@ final class ProtoMapper {
         setIfNotNull(record.actionName(), builder::setActionName);
         setIfNotNull(record.traceId(), builder::setTraceId);
         setIfNotNull(record.data(), builder::setData);
+        setIfNotNull(record.tenantId(), builder::setTenantId);
         if (record.createdAt() != null) {
             builder.setCreatedAt(record.createdAt().toString());
         }
@@ -78,6 +88,10 @@ final class ProtoMapper {
                 .setPage(page)
                 .setSize(size)
                 .build();
+    }
+
+    static AuditCursorQueryResponse toCursorQueryResponse(List<AuditRecordProto> records) {
+        return AuditCursorQueryResponse.newBuilder().addAllRecords(records).build();
     }
 
     private static AuditOutcomeProto toOutcomeProto(AuditOutcome outcome) {

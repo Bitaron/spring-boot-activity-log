@@ -1,6 +1,7 @@
 package io.github.bitaron.auditlog.query;
 
 import io.github.bitaron.auditlog.autoconfigure.AuditLogAutoConfiguration;
+import io.github.bitaron.auditlog.contract.AuditTenantResolver;
 import io.github.bitaron.auditlog.entity.AuditLog;
 import io.github.bitaron.auditlog.entity.AuditOutcome;
 import io.github.bitaron.auditlog.testfixtures.host.HostAppMarker;
@@ -13,6 +14,8 @@ import org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfigurat
 import org.springframework.boot.autoconfigure.transaction.TransactionAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -119,10 +122,110 @@ class JpaAuditLogQueryServiceTest {
         });
     }
 
+    /** WP17 acceptance: {@link AuditRecord#toCursor()} is equivalent to manually constructing
+     * {@code new AuditCursor(last.createdAt(), last.id())} - same pages, same order. */
+    @Test
+    void toCursorProducesTheSamePagesAsManualCursorConstruction() {
+        contextRunner.run(context -> {
+            seedRows(context, SEED_ROW_COUNT);
+            AuditLogQueryService queryService = context.getBean(AuditLogQueryService.class);
+
+            List<AuditRecord> firstPage = queryService.findAfter(AuditQuery.all(), null, 2);
+            AuditRecord last = firstPage.get(firstPage.size() - 1);
+
+            List<AuditRecord> viaToCursor = queryService.findAfter(AuditQuery.all(), last.toCursor(), 2);
+            List<AuditRecord> viaManualCursor = queryService.findAfter(
+                    AuditQuery.all(), new AuditCursor(last.createdAt(), last.id()), 2);
+
+            assertThat(viaToCursor).isEqualTo(viaManualCursor);
+        });
+    }
+
+    /**
+     * WP15 acceptance: with the default {@code audit.log.multi-tenancy.enabled=false}, rows from
+     * every tenant (including no tenant at all) are returned exactly as before this feature
+     * existed - upgrading to this version changes nothing for a single-tenant deployment.
+     */
+    @Test
+    void multiTenancyDisabledByDefaultReturnsRowsAcrossAllTenants() {
+        contextRunner.run(context -> {
+            seedRows(context, 2, "tenant-a");
+            seedRows(context, 3, "tenant-b");
+            AuditLogQueryService queryService = context.getBean(AuditLogQueryService.class);
+
+            assertThat(queryService.find(AuditQuery.all(), PageRequest.of(0, 10)).getTotalElements())
+                    .isEqualTo(5);
+        });
+    }
+
+    /**
+     * WP15 acceptance, the cross-tenant-isolation guarantee: once multi-tenancy is enabled, every
+     * read is scoped to whatever {@link AuditTenantResolver} resolves - not to anything the caller
+     * put in {@link AuditQuery} (which doesn't even have a tenant field) - so tenant-b's rows are
+     * unreachable through this query service instance no matter how it's called.
+     */
+    @Test
+    void multiTenancyEnabledScopesEveryReadToTheResolvedTenantOnly() {
+        contextRunner.withPropertyValues("audit.log.multi-tenancy.enabled=true")
+                .withUserConfiguration(FixedTenantResolverConfig.class)
+                .run(context -> {
+                    seedRows(context, 2, "tenant-a");
+                    seedRows(context, 3, "tenant-b");
+                    AuditLogQueryService queryService = context.getBean(AuditLogQueryService.class);
+
+                    var page = queryService.find(AuditQuery.all(), PageRequest.of(0, 10));
+                    assertThat(page.getTotalElements()).isEqualTo(2);
+                    assertThat(page.getContent()).allSatisfy(record ->
+                            assertThat(record.tenantId()).isEqualTo("tenant-a"));
+
+                    List<AuditRecord> viaFindAfter = queryService.findAfter(AuditQuery.all(), null, 10);
+                    assertThat(viaFindAfter).hasSize(2).allSatisfy(record ->
+                            assertThat(record.tenantId()).isEqualTo("tenant-a"));
+                });
+    }
+
+    /** WP15 acceptance, the fail-closed guarantee: an unresolvable tenant refuses the read
+     * entirely rather than silently falling back to an unscoped (all-tenants) query. */
+    @Test
+    void multiTenancyEnabledWithNoResolvableTenantFailsClosed() {
+        contextRunner.withPropertyValues("audit.log.multi-tenancy.enabled=true")
+                .withUserConfiguration(NullTenantResolverConfig.class)
+                .run(context -> {
+                    seedRows(context, 2, "tenant-a");
+                    AuditLogQueryService queryService = context.getBean(AuditLogQueryService.class);
+
+                    assertThatThrownBy(() -> queryService.find(AuditQuery.all(), PageRequest.of(0, 10)))
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("multi-tenancy");
+                    assertThatThrownBy(() -> queryService.findAfter(AuditQuery.all(), null, 10))
+                            .isInstanceOf(IllegalStateException.class);
+                });
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class FixedTenantResolverConfig {
+        @Bean
+        AuditTenantResolver auditTenantResolver() {
+            return () -> "tenant-a";
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class NullTenantResolverConfig {
+        @Bean
+        AuditTenantResolver auditTenantResolver() {
+            return () -> null;
+        }
+    }
+
     /** Seeds {@code count} rows with strictly increasing {@code createdAt} timestamps (bypassing
      * {@link io.github.bitaron.auditlog.core.AuditLogWriter}, which always stamps {@code now()},
-     * so ordering across rows is deterministic for these tests). */
+     * so ordering across rows is deterministic for these tests), and no tenant. */
     private void seedRows(ApplicationContext context, int count) {
+        seedRows(context, count, null);
+    }
+
+    private void seedRows(ApplicationContext context, int count, String tenantId) {
         PlatformTransactionManager transactionManager = context.getBean(PlatformTransactionManager.class);
         LocalDateTime base = LocalDateTime.now(ZoneOffset.UTC).minusDays(1);
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
@@ -133,6 +236,7 @@ class JpaAuditLogQueryServiceTest {
                 auditLog.setAuditType("test");
                 auditLog.setCreatedAt(base.plusMinutes(i));
                 auditLog.setOutcome(AuditOutcome.SUCCESS);
+                auditLog.setTenantId(tenantId);
                 entityManager.persist(auditLog);
                 rows.add(auditLog);
             }

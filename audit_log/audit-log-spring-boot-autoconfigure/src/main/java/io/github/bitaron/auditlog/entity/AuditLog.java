@@ -33,7 +33,11 @@ import java.util.Objects;
 @Table(name = "audit_log", indexes = {
         @Index(name = "idx_audit_log_created_at", columnList = "created_at"),
         @Index(name = "idx_audit_log_actor_id", columnList = "actor_id"),
-        @Index(name = "idx_audit_log_audit_type", columnList = "audit_type")
+        @Index(name = "idx_audit_log_audit_type", columnList = "audit_type"),
+        // Tenant-first composite: once audit.log.multi-tenancy.enabled=true, the hot-path read is
+        // "this tenant's records, newest first" (see JpaAuditLogQueryService's mandatory tenant
+        // predicate) - a single-column tenant_id index alone would still force a secondary sort.
+        @Index(name = "idx_audit_log_tenant_created_at", columnList = "tenant_id, created_at")
 })
 public class AuditLog {
     @Id
@@ -85,6 +89,10 @@ public class AuditLog {
 
     @Column(name = "group_id")
     private Long groupId;
+
+    /** Null when multi-tenancy is disabled or unresolvable - see {@code AuditTenantResolver}. */
+    @Column(name = "tenant_id")
+    private String tenantId;
 
     @Override
     public boolean equals(Object o) {

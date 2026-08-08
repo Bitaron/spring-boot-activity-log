@@ -52,6 +52,6 @@ class FreemarkerTemplateResolverTest {
     }
 
     private AuditContext contextWithActor(String actorName) {
-        return new AuditContext(null, actorName, null, null, null, null, null, null, false, 0, null);
+        return new AuditContext(null, actorName, null, null, null, null, null, null, false, 0, null, null);
     }
 }

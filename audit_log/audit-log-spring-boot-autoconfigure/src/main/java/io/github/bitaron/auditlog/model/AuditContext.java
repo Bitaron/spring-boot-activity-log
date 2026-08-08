@@ -25,6 +25,9 @@ package io.github.bitaron.auditlog.model;
  *                          milliseconds
  * @param traceId          the current distributed-tracing trace id (read from MDC), or
  *                          {@code null} if none is active
+ * @param tenantId         the tenant this event belongs to, resolved by
+ *                          {@link io.github.bitaron.auditlog.contract.AuditTenantResolver}, or
+ *                          {@code null} if multi-tenancy is disabled or none was resolvable
  */
 public record AuditContext(
         String actorId,
@@ -37,6 +40,7 @@ public record AuditContext(
         Object exception,
         boolean exceptionThrown,
         long durationMillis,
-        String traceId
+        String traceId,
+        String tenantId
 ) {
 }

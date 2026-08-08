@@ -1,11 +1,12 @@
 package org.commlink.log;
 
-import io.github.bitaron.auditlog.entity.AuditLog;
-import io.github.bitaron.auditlog.entity.AuditLogMessage;
 import io.github.bitaron.auditlog.entity.AuditOutcome;
+import io.github.bitaron.auditlog.query.AuditLogQueryService;
+import io.github.bitaron.auditlog.query.AuditQuery;
+import io.github.bitaron.auditlog.query.AuditRecord;
+import io.github.bitaron.auditlog.testsupport.AuditLogAssertions;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
-import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,7 +14,6 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.util.List;
@@ -27,6 +27,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * End-to-end proof that the audit-log starter works inside a real Spring Boot application: the
  * demo's own entities/repositories and the starter's must both come up, {@code /test} must
  * succeed, and - once the (asynchronous) write lands - exactly one audit_log row must exist.
+ * <p>
+ * Reads through {@link AuditLogQueryService} (via {@link AuditLogAssertions}, WP17) rather than
+ * querying the {@code AuditLog}/{@code AuditLogMessage} entities directly - this test previously
+ * did the latter, contradicting this project's own README ("don't query the entities directly").
+ * {@link AuditLogAssertions#messagesFor} is the one deliberate exception: the read API has no
+ * message-content accessor yet (a separate, future work item), so that one piece still goes
+ * through the entity manager, centralized in the shared helper instead of ad hoc here.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 @AutoConfigureMockMvc
@@ -34,6 +41,9 @@ class AuditLogTestControllerIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private AuditLogQueryService auditLogQueryService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -43,24 +53,20 @@ class AuditLogTestControllerIntegrationTest {
 
     @AfterEach
     void clearAuditLogs() {
-        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
-            entityManager.createQuery("delete from AuditLogMessage").executeUpdate();
-            entityManager.createQuery("delete from AuditLog").executeUpdate();
-        });
+        AuditLogAssertions.clearAuditLog(entityManager, transactionManager);
     }
 
     @Test
     void successfulCallIsRecordedAsynchronously() throws Exception {
         mockMvc.perform(get("/test")).andExpect(status().isOk());
 
-        Awaitility.await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
-                assertThat(auditLogs()).hasSize(1));
+        AuditRecord record = AuditLogAssertions.awaitRecord(
+                auditLogQueryService, AuditQuery.byType("test"), Duration.ofSeconds(5));
 
-        AuditLog row = auditLogs().get(0);
-        assertThat(row.getAuditType()).isEqualTo("test");
-        assertThat(row.getOutcome()).isEqualTo(AuditOutcome.SUCCESS);
-        assertThat(row.getDurationMs()).isNotNull();
-        assertThat(messagesFor(row)).extracting(AuditLogMessage::getMessage).allMatch(m -> m.contains("got value 10"));
+        assertThat(record.auditType()).isEqualTo("test");
+        assertThat(record.outcome()).isEqualTo(AuditOutcome.SUCCESS);
+        assertThat(record.durationMs()).isNotNull();
+        assertThat(messagesFor(record)).allMatch(m -> m.contains("got value 10"));
     }
 
     /**
@@ -75,23 +81,14 @@ class AuditLogTestControllerIntegrationTest {
         assertThatThrownBy(() -> mockMvc.perform(get("/test/fail")))
                 .hasRootCauseMessage("Test exception");
 
-        Awaitility.await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
-                assertThat(auditLogs()).hasSize(1));
+        AuditRecord record = AuditLogAssertions.awaitRecord(
+                auditLogQueryService, AuditQuery.byType("test"), Duration.ofSeconds(5));
 
-        AuditLog row = auditLogs().get(0);
-        assertThat(row.getOutcome()).isEqualTo(AuditOutcome.FAILURE);
-        assertThat(messagesFor(row)).extracting(AuditLogMessage::getMessage).allMatch(m -> m.contains("it failed"));
+        assertThat(record.outcome()).isEqualTo(AuditOutcome.FAILURE);
+        assertThat(messagesFor(record)).allMatch(m -> m.contains("it failed"));
     }
 
-    private List<AuditLog> auditLogs() {
-        return new TransactionTemplate(transactionManager).execute(status ->
-                entityManager.createQuery("select a from AuditLog a", AuditLog.class).getResultList());
-    }
-
-    private List<AuditLogMessage> messagesFor(AuditLog auditLog) {
-        return new TransactionTemplate(transactionManager).execute(status ->
-                entityManager.createQuery("select m from AuditLogMessage m where m.auditLogId = :id", AuditLogMessage.class)
-                        .setParameter("id", auditLog.getId())
-                        .getResultList());
+    private List<String> messagesFor(AuditRecord record) {
+        return AuditLogAssertions.messagesFor(entityManager, record);
     }
 }

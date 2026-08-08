@@ -130,6 +130,28 @@ docs.
 | Writes | New `AuditLogRecorder` (+ `AuditEventRequest`): record an audit event programmatically, with no `@Audit`-annotated method invocation for AOP to intercept - a message-queue consumer, a batch job, or the new REST server module below. |
 | Server | New optional module `audit-log-spring-boot-server`: a Protobuf-over-HTTP ingestion/query server (`POST /audit-log/events`, `GET /audit-log/records`). Off by default (`audit.log.server.enabled=false`); requires `audit.log.server.api-key` once enabled. |
 | Client | New `audit-log-server-proto` (generated Protobuf types, `.proto` schema bundled in the jar) and `audit-log-java-client` (a typed `RestClient` wrapper) modules for talking to the server module. |
+| Multi-tenancy | New opt-in tenant tagging/scoping (`audit.log.multi-tenancy.enabled=false` by default - zero behavior change on upgrade for the core starter's own reads/writes). New `AuditTenantResolver` SPI (`DefaultAuditTenantResolver` reads `audit.log.headers.tenant-id`, default `X-TENANT-ID`); `AuditContext`/`AuditEventRequest`/`AuditRecord` each gain a trailing `tenantId` field (source-breaking for any direct positional-constructor call - update call sites); new nullable `audit_log.tenant_id` column (`V3__audit_log_multi_tenancy.sql`). Once enabled, every `AuditLogQueryService` read is unconditionally scoped to the resolved tenant (not a caller-suppliable `AuditQuery` field) and fails closed (`IllegalStateException`) if none resolves. `AuditEventRequest`/`AuditRecordProto` gain a `tenant_id` field on the wire; `AuditQueryRequest` deliberately does not, for the reason documented in `audit_event.proto`. |
+| Multi-tenancy (WP16) | `AuditTemplate`/`AuditGroup` are now tenant-scoped too (new `tenant_id` column, `""` sentinel for "global" - see `AuditTemplate.GLOBAL_TENANT_ID`; `V4__audit_log_tenant_scoped_templates_groups.sql`); new `audit.log.tenant-templates.<tenantId>.<name>` property layer. `AuditLogRetentionService` purges per-tenant, honoring a new `audit.log.retention.tenant-max-age.<tenantId>` override with `retention.max-age` as the fallback. The server module's authentication is now per-tenant - see "Breaking changes" below, this one is **not** purely additive. |
+| API ergonomics (WP17) | Purely additive - no breaking changes. `AuditEventRequest.builder(auditType)` (+ `success`/`failure` convenience methods); `AuditQuery.byActor`/`byType`/`byActorAndType` static factories and `withActor`/`withType`/`withCreatedBetween` withers; `AuditRecord.toCursor()`; `AuditLogGenericDataGetter`'s 5 methods are now `default` (existing implementers compile unchanged). New published `testsupport.AuditLogAssertions` (the core module's `tests` classifier) for asserting audit records through `AuditLogQueryService` in a consumer's own tests. |
+| Client/server (WP17) | New `GET /audit-log/records/after` server endpoint + `AuditLogQueryService#findAfter`-equivalent `AuditLogHttpClient#queryAfter`, backed by new `AuditCursorQueryRequest`/`AuditCursorQueryResponse` proto messages. `AuditLogHttpClient` gained a `RestClient.Builder`-accepting constructor, `query(AuditQueryRequest)`, and a typed `client.exception.AuditLogClientException` hierarchy (`Authentication`/`BadRequest`/`Server`/`Connection`) instead of letting `RestClient`'s generic exceptions propagate. New optional module `audit-log-java-client-spring-boot-starter` auto-registers an `AuditLogHttpClient` bean from `audit.log.client.*` properties (off by default). Also fixes a real pre-existing bug: `AuditServerExceptionHandler` was never registered as a `@Bean`, so a caller sending only `Accept: application/x-protobuf` to a caller-error request got an uncaught `500` instead of the documented `400` in any real host application - see "Decisions" #17 in `HANDOFF.md`. |
+| gRPC server (WP18) | New optional module `audit-log-spring-boot-grpc-server`: a gRPC ingestion/query server implementing the same three operations as the REST server module (`Ingest`/`Query`/`QueryAfter`), on a new `service AuditLogService` block added to `audit_event.proto` (reusing every existing message unchanged - no new message types). Off by default (`audit.log.grpc.enabled=false`); requires `audit.log.multi-tenancy.enabled=true`; per-tenant `audit.log.grpc.api-keys.<tenantId>` authentication via the `x-api-key` gRPC metadata entry, same model as the REST server module's `X-API-Key` header. **Cannot be enabled in the same application as `audit-log-spring-boot-server`** - both fail startup if the other's `enabled` property is also `true` (see "Decisions" #18 in `HANDOFF.md`); run them as separate deployed instances. Purely additive - no existing API, message, or property was changed to add it. |
+| Documentation (WP19) | No API/schema/property change - documentation and build tooling only. New [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) (every `audit.log.*` property in one place); a hand-authored OpenAPI spec + bundled Swagger UI for the REST server module (`/swagger-ui/index.html` on a running instance); a new GitHub Pages docs site aggregating Javadoc, the Swagger spec, and every Markdown doc, published by [`.github/workflows/pages.yml`](.github/workflows/pages.yml) on every push to `main`. |
+
+### Breaking changes in WP16 (server module + `AuditTemplateSource` SPI)
+
+Unlike everything else in this table, these two are not backward compatible - there was no
+existing deployment of this pre-release library to preserve compatibility for, so the redesign
+went straight to the better shape rather than keeping both old and new side by side:
+
+- **`audit.log.server.api-key` (single shared secret) is gone.** Replaced entirely by
+  `audit.log.server.api-keys.<tenantId>` (a map, at least one entry required) - see the server
+  module's own README. `audit.log.server.multi-tenancy.required` is also gone: every ingest is now
+  authenticated to exactly one tenant by the key it's presented with, so there's no separate
+  "should tenant be required" toggle left to have. The server module additionally now requires
+  `audit.log.multi-tenancy.enabled=true` whenever it's enabled - fails startup otherwise.
+- **`AuditTemplateSource.findTemplate(String name)` is now `findTemplate(String tenantId, String name)`.**
+  Any custom `AuditTemplateSource` bean needs its `findTemplate` signature updated; a source with no
+  notion of tenancy can simply ignore the new parameter.
 
 ### New configuration properties
 
@@ -141,5 +163,16 @@ docs.
 | `audit.log.retention.max-age` | *(required if enabled)* | Records older than this become eligible for deletion |
 | `audit.log.retention.cron` | `0 0 3 * * *` | When the purge job runs |
 | `audit.log.retention.batch-size` | `1000` | Rows deleted per batch iteration |
-| `audit.log.server.enabled` | `false` | Master switch for the REST server module |
-| `audit.log.server.api-key` | *(required if enabled)* | Shared secret required via the `X-API-Key` header |
+| `audit.log.server.enabled` | `false` | Master switch for the REST server module; requires `audit.log.multi-tenancy.enabled=true` (WP16) |
+| `audit.log.server.api-keys.<tenantId>` | *(at least one required if enabled)* | Per-tenant API key (WP16) via the `X-API-Key` header - replaces the removed `audit.log.server.api-key` |
+| `audit.log.multi-tenancy.enabled` | `false` | Master switch for tenant tagging/scoping |
+| `audit.log.headers.tenant-id` | `X-TENANT-ID` | Header the default `AuditTenantResolver` reads from |
+| `audit.log.tenant-templates.<tenantId>.<name>` | - | Per-tenant template override (WP16) |
+| `audit.log.retention.tenant-max-age.<tenantId>` | - | Per-tenant retention window override (WP16) |
+| `audit.log.client.enabled` | `false` | Master switch for the auto-registered `AuditLogHttpClient` bean (WP17) |
+| `audit.log.client.base-url` | *(required if enabled)* | The REST server module's base URL |
+| `audit.log.client.api-key` | - | Which tenant this client acts as, per `audit.log.server.api-keys.<tenantId>` on the server |
+| `audit.log.client.http.connect-timeout` / `read-timeout` | `5s` / `30s` | Timeouts for every request this client makes |
+| `audit.log.grpc.enabled` | `false` | Master switch for the gRPC server module (WP18); requires `audit.log.multi-tenancy.enabled=true` and cannot coexist with `audit.log.server.enabled=true` |
+| `audit.log.grpc.port` | `9090` | Port the gRPC server listens on; `0` binds an OS-assigned ephemeral port |
+| `audit.log.grpc.api-keys.<tenantId>` | *(at least one required if enabled)* | Per-tenant API key (WP18) via the `x-api-key` gRPC metadata entry - own namespace, separate from `audit.log.server.api-keys.<tenantId>` |

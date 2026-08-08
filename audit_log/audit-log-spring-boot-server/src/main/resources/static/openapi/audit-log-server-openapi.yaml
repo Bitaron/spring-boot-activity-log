@@ -1,0 +1,375 @@
+openapi: 3.0.3
+info:
+  title: audit-log REST server
+  description: >
+    Optional REST ingestion/query server for the `audit-log` Spring Boot starter
+    (`audit-log-spring-boot-server`) - for a caller with no in-process JVM method invocation for AOP
+    to intercept (a remote service, a non-JVM caller). See
+    https://github.com/Bitaron/spring-boot-activity-log for the full project.
+
+
+    **Hand-authored, not generated from the running server.** This module speaks Protobuf on the
+    wire (via Spring's `ProtobufHttpMessageConverter`), not plain Jackson JSON, so this spec is
+    maintained by hand against `audit_event.proto` (the actual source of truth for every message
+    shape) rather than introspected from the generated protobuf Java classes at runtime, which would
+    produce an inaccurate schema (internal fields like `descriptorForType`, `serializedSize`, etc.).
+    If a field here and the `.proto` file ever disagree, the `.proto` file is right.
+
+
+    **Content negotiation.** Every request/response body accepts and returns either
+    `application/x-protobuf` (binary, recommended for production traffic) or `application/json`
+    (Protobuf's *canonical JSON mapping* - not a hand-written DTO shape): field names are
+    lowerCamelCase versions of the `.proto` field names, `int64` fields are serialized as **JSON
+    strings** (not numbers, to avoid precision loss in JavaScript/JSON clients), and enums serialize
+    as their string name (e.g. `"AUDIT_OUTCOME_SUCCESS"`). This spec describes the JSON mapping,
+    since that's what's directly inspectable/testable from a browser or `curl`.
+  version: "2.0.0-SNAPSHOT"
+  license:
+    name: Apache License, Version 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.txt
+  contact:
+    name: audit-log project
+    url: https://github.com/Bitaron/spring-boot-activity-log
+externalDocs:
+  description: >-
+    Protobuf schema (source of truth for the wire format) and the module README
+    (multi-tenancy/auth model, config reference)
+  url: https://github.com/Bitaron/spring-boot-activity-log/blob/main/audit_log/audit-log-server-proto/src/main/proto/auditlog/v1/audit_event.proto
+servers:
+  - url: /
+    description: Wherever this server is deployed - paths are relative.
+security:
+  - ApiKeyAuth: []
+tags:
+  - name: Ingest
+    description: Write path - record one fully-described audit event.
+  - name: Query
+    description: Read path - offset and keyset (seek) pagination over recorded events.
+paths:
+  /audit-log/events:
+    post:
+      tags: [Ingest]
+      operationId: ingestEvent
+      summary: Record one audit event
+      description: >
+        Mirrors what the `@Audit`-annotated-method + AOP path does in-process, for a caller with no
+        such method invocation to intercept. The persisted event's `tenantId` is always the tenant
+        authenticated by the `X-API-Key` presented on this request - a body naming a *different*
+        `tenantId` is rejected (`400`), never silently overridden. Simplest usage: omit `tenantId`
+        on the wire entirely; it's derived from the key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuditEventRequest'
+          application/x-protobuf:
+            schema:
+              type: string
+              format: binary
+              description: Binary-encoded `AuditEventRequest` protobuf message.
+      responses:
+        '202':
+          description: >
+            Accepted for processing. The write itself still follows the server's configured
+            `audit.log.mode` (ASYNC/SYNC) delivery pipeline - `accepted: true` means the request was
+            well-formed and handed off, not that the row is durably committed yet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEventResponse'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /audit-log/records:
+    get:
+      tags: [Query]
+      operationId: queryRecords
+      summary: Offset-paginated read of recorded events, scoped to the authenticated tenant
+      description: >
+        Reads are scoped entirely by the tenant the `X-API-Key` authenticated - there is no
+        caller-suppliable tenant filter on this endpoint (a key can only ever see its own tenant's
+        data). The `size` cap is `audit.log.query.max-page-size` (default 200); a larger value is
+        rejected (`400`) rather than silently clamped. Prefer `/audit-log/records/after` (keyset
+        pagination) once the table is large enough that offset pagination's "discard everything
+        before this page" cost starts to matter - see `docs/SCALING.md` in the repository.
+      parameters:
+        - $ref: '#/components/parameters/ActorId'
+        - $ref: '#/components/parameters/AuditType'
+        - $ref: '#/components/parameters/CreatedAtFrom'
+        - $ref: '#/components/parameters/CreatedAtTo'
+        - name: page
+          in: query
+          description: Zero-based page index.
+          schema:
+            type: integer
+            format: int32
+            default: 0
+            minimum: 0
+        - name: size
+          in: query
+          description: Page size; capped by `audit.log.query.max-page-size` (default 200).
+          schema:
+            type: integer
+            format: int32
+            default: 50
+            minimum: 1
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditQueryResponse'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /audit-log/records/after:
+    get:
+      tags: [Query]
+      operationId: queryRecordsAfter
+      summary: Keyset ("seek") pagination, for large result sets
+      description: >
+        Same filters as `/audit-log/records`, plus a cursor: the `(createdAt, id)` of the last row
+        already seen, from a previous page's last record. Omit both cursor parameters for the first
+        page; otherwise both must be supplied together - supplying only one is rejected (`400`).
+        Independent of how deep into the result set you are, unlike `page`/`size` offset pagination.
+      parameters:
+        - $ref: '#/components/parameters/ActorId'
+        - $ref: '#/components/parameters/AuditType'
+        - $ref: '#/components/parameters/CreatedAtFrom'
+        - $ref: '#/components/parameters/CreatedAtTo'
+        - name: cursorCreatedAt
+          in: query
+          description: >-
+            `createdAt` of the last record already seen (ISO-8601). Must be supplied together with
+            `cursorId`, or neither, for the first page.
+          schema:
+            type: string
+            format: date-time
+        - name: cursorId
+          in: query
+          description: >-
+            `id` of the last record already seen. Must be supplied together with `cursorCreatedAt`,
+            or neither, for the first page.
+          schema:
+            type: integer
+            format: int64
+        - name: limit
+          in: query
+          description: Maximum records to return; capped by `audit.log.query.max-page-size`.
+          schema:
+            type: integer
+            format: int32
+            default: 50
+            minimum: 1
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditCursorQueryResponse'
+            application/x-protobuf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: >-
+        One of `audit.log.server.api-keys.<tenantId>`'s configured values. Identifies exactly one
+        tenant - which tenant a request acts as is determined entirely by which key it presents,
+        never by anything else in the request.
+  parameters:
+    ActorId:
+      name: actorId
+      in: query
+      description: Exact-match filter on the actor id.
+      schema:
+        type: string
+    AuditType:
+      name: auditType
+      in: query
+      description: Exact-match filter on the audit type.
+      schema:
+        type: string
+    CreatedAtFrom:
+      name: createdAtFrom
+      in: query
+      description: Inclusive lower bound on `createdAt` (ISO-8601). Unset means unfiltered.
+      schema:
+        type: string
+        format: date-time
+    CreatedAtTo:
+      name: createdAtTo
+      in: query
+      description: Inclusive upper bound on `createdAt` (ISO-8601). Unset means unfiltered.
+      schema:
+        type: string
+        format: date-time
+  responses:
+    BadRequest:
+      description: >-
+        The request was well-formed but rejected - a `tenantId` mismatch, an oversized
+        page/limit, an unsupported sort property, or a half-supplied keyset cursor. Body is the raw
+        `text/plain` exception message (may be empty), not a structured JSON error object - see
+        `AuditServerExceptionHandler`'s javadoc for why this endpoint intentionally never tries to
+        content-negotiate the error body itself.
+      content:
+        text/plain:
+          schema:
+            type: string
+    Unauthorized:
+      description: Missing or unrecognized `X-API-Key`.
+      content: {}
+  schemas:
+    AuditEventRequest:
+      type: object
+      description: >-
+        `POST /audit-log/events` body: one fully-described audit event. Mirrors
+        `io.github.bitaron.auditlog.model.AuditEventRequest` field-for-field.
+      properties:
+        auditType:
+          type: string
+        actionName:
+          type: string
+        actionType:
+          type: string
+        groupName:
+          type: string
+        templates:
+          type: array
+          items:
+            type: string
+        actorId:
+          type: string
+        actorName:
+          type: string
+        clientIp:
+          type: string
+        clientLocation:
+          type: string
+        userAgent:
+          type: string
+        argsJson:
+          type: string
+          description: >-
+            Opaque, caller-supplied JSON text - passed through as a JSON-string-escaped value
+            inside the stored `data` payload, not structurally merged (a documented v1
+            simplification; see the `.proto` file's comment).
+        resultJson:
+          type: string
+        exceptionJson:
+          type: string
+        exceptionThrown:
+          type: boolean
+          default: false
+        durationMillis:
+          type: string
+          format: int64
+          description: Serialized as a JSON string (protobuf `int64` canonical JSON mapping).
+        traceId:
+          type: string
+        tenantId:
+          type: string
+          description: >-
+            Caller-supplied, like `actorId` - same trust level as this endpoint's API-key auth model.
+            **Only meaningful if it matches the tenant the API key authenticated**; a different
+            value is rejected (`400`). Simplest usage: omit it.
+    AuditEventResponse:
+      type: object
+      properties:
+        accepted:
+          type: boolean
+    AuditOutcomeProto:
+      type: string
+      enum:
+        - AUDIT_OUTCOME_UNSPECIFIED
+        - AUDIT_OUTCOME_SUCCESS
+        - AUDIT_OUTCOME_FAILURE
+      description: >-
+        `AUDIT_OUTCOME_UNSPECIFIED` is proto3's required zero-value sentinel and should never
+        appear on a real persisted record.
+    AuditRecordProto:
+      type: object
+      description: One row from `AuditLogQueryService.find`/`findAfter`.
+      properties:
+        id:
+          type: string
+          format: int64
+        auditType:
+          type: string
+        actorId:
+          type: string
+        actorName:
+          type: string
+        clientIp:
+          type: string
+        clientLocation:
+          type: string
+        userAgent:
+          type: string
+        actionType:
+          type: string
+        actionName:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+          description: ISO-8601 (`java.time.LocalDateTime#toString` wire format, UTC).
+        outcome:
+          $ref: '#/components/schemas/AuditOutcomeProto'
+        durationMs:
+          type: string
+          format: int64
+        traceId:
+          type: string
+        data:
+          type: string
+          description: Serialized (and, per `audit.log.masked-fields`, redacted) arguments/result JSON.
+        groupId:
+          type: string
+          format: int64
+        tenantId:
+          type: string
+    AuditQueryResponse:
+      type: object
+      properties:
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditRecordProto'
+        totalElements:
+          type: string
+          format: int64
+        page:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+    AuditCursorQueryResponse:
+      type: object
+      properties:
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditRecordProto'
