@@ -1,0 +1,87 @@
+name: Docs site (GitHub Pages)
+
+# Builds a static documentation hub - aggregated Javadoc for the library modules, a Swagger UI view
+# of the REST server's hand-authored OpenAPI spec, and the repository's own Markdown docs rendered
+# client-side - and publishes it to GitHub Pages.
+#
+# One-time setup this workflow cannot do for you: in the repository's Settings -> Pages, set
+# "Build and deployment" -> "Source" to "GitHub Actions". Until that's set, this workflow will run
+# and produce an artifact, but the deploy-pages step will fail with a 404 against the Pages API.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          # Not 25: Lombok doesn't yet generate members correctly under JDK 25's compiler
+          # internals - see the comment in pom.xml for details.
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      # Installs the library modules to the local repo first so the aggregated Javadoc's
+      # cross-module @link/@see references resolve against real classes, not just compile.
+      - name: Install library modules
+        run: mvn -f audit_log/pom.xml -B install -DskipTests -q
+
+      - name: Aggregate Javadoc
+        run: mvn -f audit_log/pom.xml -B org.apache.maven.plugins:maven-javadoc-plugin:3.8.0:aggregate -q
+
+      - name: Assemble site
+        run: |
+          set -eu
+          SITE=_site
+          rm -rf "$SITE"
+          mkdir -p "$SITE/docs" "$SITE/apidocs" "$SITE/swagger"
+
+          # Hub pages (index/docs viewer/swagger viewer/stylesheet) - see .github/pages-site/.
+          cp .github/pages-site/index.html .github/pages-site/docs.html .github/pages-site/style.css "$SITE/"
+          cp .github/pages-site/swagger/index.html "$SITE/swagger/index.html"
+
+          # This repository's own Markdown docs, verbatim - docs.html renders them client-side, so
+          # no server-side rendering step is needed here, just copying them to the paths docs.html
+          # fetches (see index.html's ?file= links).
+          cp README.md AGENTS.md HANDOFF.md MIGRATION.md "$SITE/"
+          cp docs/*.md "$SITE/docs/"
+
+          # Aggregated Javadoc across every library module.
+          cp -r audit_log/target/site/apidocs/. "$SITE/apidocs/"
+
+          # The REST server's hand-authored OpenAPI spec - single source of truth also used by the
+          # module's own bundled Swagger UI (audit-log-spring-boot-server/src/main/resources/static/).
+          cp audit_log/audit-log-spring-boot-server/src/main/resources/static/openapi/audit-log-server-openapi.yaml \
+             "$SITE/swagger/audit-log-server-openapi.yaml"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

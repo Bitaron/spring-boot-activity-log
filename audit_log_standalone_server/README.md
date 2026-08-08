@@ -56,6 +56,10 @@ curl "http://localhost:8080/audit-log/records?auditType=smoke-test" -H "X-API-Ke
 # -> only that same tenant's rows, even if other tenants' keys have ingested matching auditTypes
 ```
 
+Or browse `http://localhost:8080/swagger-ui/index.html` for an interactive view of all three
+endpoints - see `audit-log-spring-boot-server/README.md`'s "API docs" section for how that spec is
+maintained.
+
 ## Production notes
 
 - Per-tenant API keys are a first cut, not a complete auth solution - see the Javadoc on

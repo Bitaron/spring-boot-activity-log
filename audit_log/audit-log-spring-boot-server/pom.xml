@@ -111,6 +111,23 @@
             <version>1.18.46</version>
             <scope>provided</scope>
         </dependency>
+        <!--
+            Static Swagger UI assets only - not springdoc-openapi. springdoc would introspect this
+            module's controllers/protobuf-generated request-response classes live via Jackson and
+            produce an inaccurate schema (protobuf messages expose internal getters like
+            getDescriptorForType/getSerializedSize/getAllFields that aren't part of the actual wire
+            JSON shape, which JsonFormat, not Jackson, produces). Instead, src/main/resources/static/
+            openapi/audit-log-server-openapi.yaml is a hand-authored spec matching audit_event.proto
+            (the real source of truth), and src/main/resources/static/swagger-ui/index.html is a
+            small custom page pointing Swagger UI's dist assets (served automatically at /webjars/**
+            by Spring Boot's default WebMvcAutoConfiguration, since spring-boot-starter-web is
+            already a dependency here) at that static spec - no server-side generation involved.
+        -->
+        <dependency>
+            <groupId>org.webjars</groupId>
+            <artifactId>swagger-ui</artifactId>
+            <version>5.17.14</version>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>

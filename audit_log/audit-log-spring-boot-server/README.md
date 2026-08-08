@@ -25,6 +25,18 @@ expose HTTP endpoints.
 Both accept/return `application/x-protobuf` or, for debugging/curl convenience,
 `application/json` (Protobuf's canonical JSON mapping).
 
+## API docs (Swagger UI)
+
+Once this module is enabled, browse `/swagger-ui/index.html` on the running server for an
+interactive view of all three endpoints, backed by the spec at
+`/openapi/audit-log-server-openapi.yaml`. Both are static resources bundled into this module's jar
+(`src/main/resources/static/`) - not generated at runtime from the controllers/protobuf classes.
+That's deliberate: this module speaks Protobuf on the wire, and introspecting the generated
+protobuf Java classes with a Jackson-based tool like springdoc would produce an inaccurate schema
+(it would expose internal getters like `getDescriptorForType`/`getSerializedSize` that aren't part
+of the actual wire JSON shape `JsonFormat` produces). The spec is instead hand-maintained against
+`audit_event.proto` - the real source of truth - so keep both in sync when the schema changes.
+
 ## Multi-tenancy: authenticated, not just tagged
 
 Unlike the core starter's own default (a header a caller could set to anything), this module
@@ -76,5 +88,5 @@ server, network policy) before exposing it beyond a trusted network - see
 | `audit.log.server.enabled` | `false` | Master switch. |
 | `audit.log.server.api-keys.<tenantId>` | - | Per-tenant API key; at least one required when enabled. |
 
-See the root [`AGENTS.md`](../../AGENTS.md) for the full `audit.log.*`/`audit.log.server.*`
-reference across both modules.
+See [`docs/CONFIGURATION.md`](../../docs/CONFIGURATION.md) at the repository root for the full
+`audit.log.*` property reference across every module.

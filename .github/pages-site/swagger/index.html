@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>audit-log REST server - API docs</title>
+    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+    <style>
+        body { margin: 0; }
+        .topbar { display: none; }
+        #hub-link {
+            display: block;
+            padding: 0.6rem 1rem;
+            font: 0.85rem -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #1c1f24;
+            color: #e7e9ec;
+        }
+        #hub-link a { color: #6ea1ff; }
+    </style>
+</head>
+<body>
+<div id="hub-link"><a href="../index.html">&larr; audit-log docs hub</a></div>
+<div id="swagger-ui"></div>
+<!--
+    This is the site's own static copy of the Swagger UI page - CDN-hosted swagger-ui-dist, since
+    a static GitHub Pages build has no Spring Boot app to serve the webjar from /webjars/**. The
+    module's own bundled copy (audit-log-spring-boot-server/src/main/resources/static/swagger-ui/)
+    is what actually ships and runs against a live server; this page exists purely so the spec is
+    also browsable from this docs site without running anything. Both point at the same
+    hand-authored openapi.yaml (audit-log-server-openapi.yaml), copied into this site's build output
+    by .github/workflows/pages.yml from that same source file - never duplicated by hand.
+-->
+<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>
+    window.onload = function () {
+        window.ui = SwaggerUIBundle({
+            url: "audit-log-server-openapi.yaml",
+            dom_id: "#swagger-ui",
+            presets: [SwaggerUIBundle.presets.apis],
+            layout: "BaseLayout",
+            deepLinking: true
+        });
+    };
+</script>
+</body>
+</html>

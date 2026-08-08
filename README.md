@@ -6,6 +6,20 @@ Spring Boot starter that records audit trail entries for `@Audit`-annotated meth
 [`MIGRATION.md`](MIGRATION.md) if you're upgrading from `1.x`, or
 [`AGENTS.md`](AGENTS.md) if you're a coding agent about to make a change here.
 
+## Documentation
+
+| | |
+|---|---|
+| **Docs site** | https://bitaron.github.io/spring-boot-activity-log/ - a hub linking everything below in one place (aggregated Javadoc, the REST server's Swagger UI, and every Markdown doc, rendered). Built by [`.github/workflows/pages.yml`](.github/workflows/pages.yml) on every push to `main`; see that workflow's header comment for the one-time repository setting it needs. |
+| **Library API** | Each module's own README (linked under "Modules" below) plus generated Javadoc - `mvn -f audit_log/pom.xml org.apache.maven.plugins:maven-javadoc-plugin:3.8.0:aggregate` builds it locally at `audit_log/target/site/apidocs/index.html`. |
+| **REST server API** | [Swagger UI](audit_log/audit-log-spring-boot-server/README.md#api-docs-swagger-ui) - bundled into `audit-log-spring-boot-server` itself, served at `/swagger-ui/index.html` on any running instance (see the docs site for a static copy). Spec source: [`audit-log-server-openapi.yaml`](audit_log/audit-log-spring-boot-server/src/main/resources/static/openapi/audit-log-server-openapi.yaml). |
+| **gRPC server API** | [`audit_event.proto`](audit_log/audit-log-server-proto/src/main/proto/auditlog/v1/audit_event.proto) (the `AuditLogService` block) plus [`audit-log-spring-boot-grpc-server/README.md`](audit_log/audit-log-spring-boot-grpc-server/README.md). |
+| **Configuration** | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) - every `audit.log.*` property, in one place. |
+| **Migrating / what's new** | [`MIGRATION.md`](MIGRATION.md) |
+| **Design decisions & history** | [`AGENTS.md`](AGENTS.md) (dense, agent-facing spec) and [`HANDOFF.md`](HANDOFF.md) (narrative rationale) |
+| **Scaling** | [`docs/SCALING.md`](docs/SCALING.md) |
+| **Client codegen (any language)** | [`docs/CLIENT_CODEGEN.md`](docs/CLIENT_CODEGEN.md) |
+
 ## Quick start
 
 ```xml

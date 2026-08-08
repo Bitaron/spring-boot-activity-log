@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>audit-log REST server - API docs</title>
+    <link rel="stylesheet" href="/webjars/swagger-ui/5.17.14/swagger-ui.css">
+    <style>
+        body { margin: 0; }
+        .topbar { display: none; } /* the default Swagger-branded topbar/URL bar isn't needed - the spec is fixed */
+    </style>
+</head>
+<body>
+<div id="swagger-ui"></div>
+<script src="/webjars/swagger-ui/5.17.14/swagger-ui-bundle.js"></script>
+<script>
+    window.onload = function () {
+        window.ui = SwaggerUIBundle({
+            // Hand-authored spec, not generated at runtime - see the dependency comment in this
+            // module's pom.xml for why. Same origin as this page, so no CORS configuration needed.
+            url: "/openapi/audit-log-server-openapi.yaml",
+            dom_id: "#swagger-ui",
+            presets: [SwaggerUIBundle.presets.apis],
+            layout: "BaseLayout",
+            deepLinking: true
+        });
+    };
+</script>
+</body>
+</html>
