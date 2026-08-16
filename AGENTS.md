@@ -111,7 +111,12 @@ mvn clean install                                                # everything, f
 
 # Path 1: library jars only (the 5 audit-log-* modules) - installable/publishable, for use as a
 # dependency in any Spring Boot app. Scoped to audit_log/pom.xml's own <modules>, so it never
-# touches either runnable app below.
+# touches either runnable app below. NOTE: this alone does not leave either runnable app buildable
+# from a separate invocation - it never installs the root spring-boot-activity-log-parent pom that
+# every audit-log-* module's installed POM still declares as its Maven parent, so a later `cd
+# audit_log_usage_example && mvn spring-boot:run` (or the standalone-server equivalent) fails
+# resolving that parent one level up. Run the plain `mvn clean install` above first if you need
+# either runnable app to build too.
 mvn -f audit_log/pom.xml clean install
 mvn -f audit_log/pom.xml clean deploy -P release                   # actual publish - existing
                                                                      # OSSRH + GPG release profile

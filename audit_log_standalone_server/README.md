@@ -10,7 +10,17 @@ Not part of the published library (`audit_log/pom.xml`'s modules) - see the root
 
 ## Run it
 
-Requires at least one `audit.log.server.api-keys.<tenantId>` entry to be supplied externally -
+Requires `audit-log-spring-boot-server` (and its dependencies) to already be in your local Maven
+repository - this app depends on the `2.0.0-SNAPSHOT` of that module, which is never published to
+Central. Run the plain `mvn clean install` from the repo root before any of the commands below on a
+fresh clone; skipping that fails with `Could not find artifact
+io.github.bitaron:audit-log-spring-boot-server:jar:2.0.0-SNAPSHOT`. `mvn -f audit_log/pom.xml clean
+install` on its own is *not* enough, even though it builds every library module: it never installs
+the root `spring-boot-activity-log-parent` pom that those modules' installed POMs still declare as
+their Maven parent, so resolving them back out of the local repo from this separate app's build
+fails one level further up the parent chain instead.
+
+Also requires at least one `audit.log.server.api-keys.<tenantId>` entry to be supplied externally -
 there is no default, since an unconfigured module would otherwise leave the ingest/query endpoints
 open (see `AuditLogServerAutoConfiguration`). Each key authenticates exactly one tenant (WP16) - a
 caller presenting it can only ever act as that tenant, never another one, regardless of what it
