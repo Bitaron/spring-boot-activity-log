@@ -64,6 +64,17 @@ mvn -f audit_log/pom.xml clean install
 
 ## Run the demo
 
+Requires the [Build](#build) step above - `mvn clean install` from the repo root - to have run
+first - the demo depends on `audit-log-spring-boot-starter:2.0.0-SNAPSHOT`, which is only in your
+*local* Maven repository, not published to Central. Skipping straight to the commands below on a
+fresh clone fails with
+`Could not find artifact io.github.bitaron:audit-log-spring-boot-starter:jar:2.0.0-SNAPSHOT`. Note
+that `mvn -f audit_log/pom.xml clean install` alone is *not* enough here even though it builds
+every library module: it never installs the root `spring-boot-activity-log-parent` pom that those
+modules' installed POMs still declare as their Maven parent, so resolving them back out of the
+local repo from a separate build (like this one) fails one level further up the parent chain
+instead. Run the plain root `mvn clean install` to get both.
+
 ```bash
 cd audit_log_usage_example
 mvn spring-boot:run
@@ -86,7 +97,10 @@ For a realistic run against PostgreSQL instead: `docker compose up -d` in
 ## Run the REST server standalone
 
 `audit_log/audit-log-spring-boot-server` is a pure library (no main class) - `audit_log_standalone_server`
-is the runnable app around it, for a caller with no in-process JVM to depend on the library from:
+is the runnable app around it, for a caller with no in-process JVM to depend on the library from.
+Same prerequisite as the demo above: run the plain `mvn clean install` from the repo root first, so
+the `audit-log-spring-boot-server:2.0.0-SNAPSHOT` this app depends on (and its own parent POMs) are
+in your local Maven repository.
 
 ```bash
 AUDIT_LOG_SERVER_APIKEYS_DEFAULT=<your-secret> mvn -f audit_log_standalone_server/pom.xml spring-boot:run
