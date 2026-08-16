@@ -16,6 +16,7 @@ import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -66,7 +67,10 @@ class AuditLogHttpClientTest {
     @Test
     void queryWithMultipleFiltersCombinedMatchesOnlyTheRowSatisfyingAll() {
         AuditLogHttpClient client = new AuditLogHttpClient("http://localhost:" + port, "client-test-key");
-        LocalDateTime from = LocalDateTime.now().minusMinutes(1);
+        // AuditLogWriter always stamps createdAt via LocalDateTime.now(ZoneOffset.UTC) - the
+        // range filter bounds must use the same clock, not the system-default zone, or this
+        // window silently excludes the row on any machine whose default zone isn't UTC.
+        LocalDateTime from = LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1);
 
         client.ingest(AuditEventRequest.newBuilder()
                 .setAuditType("multi-filter-event")
@@ -82,7 +86,7 @@ class AuditLogHttpClientTest {
                     .setActorId("multi-filter-actor")
                     .setAuditType("multi-filter-event")
                     .setCreatedAtFrom(from.toString())
-                    .setCreatedAtTo(LocalDateTime.now().plusMinutes(1).toString())
+                    .setCreatedAtTo(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(1).toString())
                     .setPage(0)
                     .setSize(10)
                     .build());
