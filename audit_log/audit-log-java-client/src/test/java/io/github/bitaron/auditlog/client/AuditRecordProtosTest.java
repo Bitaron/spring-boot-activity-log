@@ -10,6 +10,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -35,7 +36,10 @@ class AuditRecordProtosTest {
     @Test
     void createdAtParsesTheWireStringBackToALocalDateTime() {
         AuditLogHttpClient client = new AuditLogHttpClient("http://localhost:" + port, "client-test-key");
-        LocalDateTime before = LocalDateTime.now();
+        // AuditLogWriter always stamps createdAt via LocalDateTime.now(ZoneOffset.UTC) - compare
+        // against the same clock, not the system-default zone, or this is timezone-dependent
+        // flakiness that only happens to pass when the machine's default zone is UTC.
+        LocalDateTime before = LocalDateTime.now(ZoneOffset.UTC);
 
         client.ingest(AuditEventRequest.newBuilder()
                 .setAuditType("created-at-round-trip")
