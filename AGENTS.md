@@ -244,7 +244,7 @@ here for fast lookup.
 12. **`audit-log-spring-boot-server` depends on `audit-log-spring-boot-starter`, not
     `audit-log-spring-boot-autoconfigure` directly.** `AuditLogAutoConfiguration` always attempts
     to register an `AuditLogAspect` bean, and that bean's class references AspectJ types at the
-    bytecode level - loading it without `spring-boot-starter-aop` on the runtime classpath throws
+    bytecode level - loading it without `spring-boot-starter-aspectj` on the runtime classpath throws
     `NoClassDefFoundError`, not a graceful skip. Caught empirically while building the server module.
 13. **`ProtobufHttpMessageConverter`'s JSON support needs `protobuf-java-util`** (for
     `com.google.protobuf.util.JsonFormat`) on the classpath - a runtime classpath probe, not a

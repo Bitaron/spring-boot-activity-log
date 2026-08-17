@@ -74,9 +74,9 @@
             always attempts to register an AuditLogAspect bean (it's only conditioned on
             audit.log.enabled, which this module needs =true for AuditLogRecorder/
             AuditLogQueryService to exist), and that bean's class references AspectJ types at the
-            bytecode level - loading it without spring-boot-starter-aop actually on the classpath
+            bytecode level - loading it without spring-boot-starter-aspectj actually on the classpath
             throws NoClassDefFoundError at context startup, not a graceful skip. The starter
-            already supplies spring-boot-starter-aop as a real (non-provided) dependency, exactly
+            already supplies spring-boot-starter-aspectj as a real (non-provided) dependency, exactly
             like audit_log_usage_example depends on it rather than the autoconfigure module.
         -->
         <dependency>
@@ -132,6 +132,16 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!--
+            Boot 4 split AutoConfigureMockMvc out of the old monolithic spring-boot-test-autoconfigure
+            into its own per-technology spring-boot-webmvc-test artifact - not pulled in transitively
+            by spring-boot-starter-test above.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-webmvc-test</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

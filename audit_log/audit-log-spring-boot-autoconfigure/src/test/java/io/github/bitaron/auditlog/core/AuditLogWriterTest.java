@@ -12,10 +12,10 @@ import jakarta.persistence.EntityManager;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
-import org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
-import org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration;
-import org.springframework.boot.autoconfigure.transaction.TransactionAutoConfiguration;
+import org.springframework.boot.data.jpa.autoconfigure.DataJpaRepositoriesAutoConfiguration;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
+import org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration;
+import org.springframework.boot.transaction.autoconfigure.TransactionAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.ApplicationContext;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -35,7 +35,7 @@ import static org.mockito.Mockito.mock;
 class AuditLogWriterTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-            // JpaRepositoriesAutoConfiguration requires AutoConfigurationPackages to be present in
+            // DataJpaRepositoriesAutoConfiguration requires AutoConfigurationPackages to be present in
             // any context; HostAppMarker (@AutoConfigurationPackage) stands in for what
             // @SpringBootApplication registers automatically in a real application.
             .withUserConfiguration(HostAppMarker.class)
@@ -47,7 +47,7 @@ class AuditLogWriterTest {
                     DataSourceAutoConfiguration.class,
                     HibernateJpaAutoConfiguration.class,
                     TransactionAutoConfiguration.class,
-                    JpaRepositoriesAutoConfiguration.class,
+                    DataJpaRepositoriesAutoConfiguration.class,
                     AuditLogAutoConfiguration.class));
 
     @Test

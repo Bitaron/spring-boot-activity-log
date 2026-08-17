@@ -21,7 +21,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.16</version>
+        <version>4.1.0</version>
         <relativePath/>
     </parent>
 
@@ -46,7 +46,7 @@
 
     <dependencies>
         <!--
-            Brings audit-log-spring-boot-starter (-> autoconfigure + spring-boot-starter-aop),
+            Brings audit-log-spring-boot-starter (-> autoconfigure + spring-boot-starter-aspectj),
             audit-log-server-proto, protobuf-java-util, spring-boot-starter-web and
             spring-boot-autoconfigure transitively - see audit_log/audit-log-spring-boot-server/pom.xml.
         -->
@@ -82,6 +82,30 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!--
+            Boot 4 split TestRestTemplate out of the old monolithic spring-boot-test module into its
+            own spring-boot-resttestclient artifact - not pulled in transitively by
+            spring-boot-starter-test above. It in turn needs ClientHttpRequestFactoryBuilder
+            (spring-boot-http-client) at runtime to build its actual request factory - caught
+            empirically as a NoClassDefFoundError the test only hits once it actually executes.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-resttestclient</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-http-client</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- TestRestTemplate also needs RestTemplateBuilder, split into its own
+             spring-boot-restclient artifact - same reasoning as spring-boot-http-client above. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-restclient</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

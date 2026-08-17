@@ -4,10 +4,10 @@ import io.github.bitaron.auditlog.autoconfigure.AuditLogAutoConfiguration;
 import io.github.bitaron.auditlog.testfixtures.host.HostAppMarker;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
-import org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
-import org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration;
-import org.springframework.boot.autoconfigure.transaction.TransactionAutoConfiguration;
+import org.springframework.boot.data.jpa.autoconfigure.DataJpaRepositoriesAutoConfiguration;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
+import org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration;
+import org.springframework.boot.transaction.autoconfigure.TransactionAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,7 +26,7 @@ class AuditSchemaValidatorTest {
                     DataSourceAutoConfiguration.class,
                     HibernateJpaAutoConfiguration.class,
                     TransactionAutoConfiguration.class,
-                    JpaRepositoriesAutoConfiguration.class,
+                    DataJpaRepositoriesAutoConfiguration.class,
                     AuditLogAutoConfiguration.class));
 
     @Test

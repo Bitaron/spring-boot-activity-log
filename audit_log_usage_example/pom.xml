@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.16</version>
+        <version>4.1.0</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>com.commlink</groupId>
@@ -27,7 +27,7 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
-        <!-- spring-boot-starter-aop no longer declared here directly: audit-log-spring-boot-starter
+        <!-- spring-boot-starter-aspectj no longer declared here directly: audit-log-spring-boot-starter
              (below) brings it transitively, the same way any other Boot starter would. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -70,6 +70,16 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!--
+            Boot 4 split AutoConfigureMockMvc out of the old monolithic spring-boot-test-autoconfigure
+            into its own per-technology spring-boot-webmvc-test artifact - not pulled in transitively
+            by spring-boot-starter-test above.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-webmvc-test</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

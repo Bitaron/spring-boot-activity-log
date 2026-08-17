@@ -12,10 +12,10 @@ import org.awaitility.Awaitility;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.aop.AopAutoConfiguration;
-import org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
-import org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration;
-import org.springframework.boot.autoconfigure.transaction.TransactionAutoConfiguration;
+import org.springframework.boot.data.jpa.autoconfigure.DataJpaRepositoriesAutoConfiguration;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
+import org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration;
+import org.springframework.boot.transaction.autoconfigure.TransactionAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -46,7 +46,7 @@ class AuditLogRecorderTest {
                     DataSourceAutoConfiguration.class,
                     HibernateJpaAutoConfiguration.class,
                     TransactionAutoConfiguration.class,
-                    JpaRepositoriesAutoConfiguration.class,
+                    DataJpaRepositoriesAutoConfiguration.class,
                     AopAutoConfiguration.class,
                     AuditLogAutoConfiguration.class));
 
