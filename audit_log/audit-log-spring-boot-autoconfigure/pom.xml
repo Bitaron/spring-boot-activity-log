@@ -71,13 +71,15 @@
         <!--
             AOP is how @Audit is actually intercepted. It's a real dependency of this module, but
             "provided" here: the audit-log-spring-boot-starter module (not this one) is what
-            consumers depend on, and it supplies spring-boot-starter-aop at compile scope so it
+            consumers depend on, and it supplies spring-boot-starter-aspectj at compile scope so it
             flows transitively to them. Declaring it non-optional/provided here (rather than
             compile) avoids pulling a second copy in when both modules are on the classpath together.
+            Boot 4 renamed spring-boot-starter-aop to spring-boot-starter-aspectj (same spring-aop +
+            aspectjweaver contents - not a switch to compile/load-time weaving).
         -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-aop</artifactId>
+            <artifactId>spring-boot-starter-aspectj</artifactId>
             <scope>provided</scope>
         </dependency>
 
@@ -108,6 +110,27 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+
+        <!--
+            Boot 4 split HibernateJpaAutoConfiguration and EntityScanPackages out of
+            spring-boot-autoconfigure into their own per-technology artifacts (a wider
+            modularization of the old monolithic autoconfigure jar - AutoConfigurationPackages
+            and the @ConditionalOn*/@AutoConfiguration annotations stayed put above).
+            "provided", same reasoning as hibernate-core below: the consuming application supplies
+            the actual JPA/Hibernate autoconfiguration, this module only needs the classes at
+            compile time (@AutoConfigureAfter(HibernateJpaAutoConfiguration.class),
+            EntityScanPackages.register(...) in AuditLogEntityScanRegistrar).
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-hibernate</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-persistence</artifactId>
+            <scope>provided</scope>
         </dependency>
 
         <!-- Generates spring-configuration-metadata.json so audit.log.* properties get IDE completion. -->
@@ -201,7 +224,7 @@
 
         <!--
             Test-only: exercises the auto-configuration against a real Spring context.
-            spring-boot-starter-aop itself is already declared above at "provided" scope, which
+            spring-boot-starter-aspectj itself is already declared above at "provided" scope, which
             Maven makes available on the test classpath too - it is NOT redeclared here, since a
             second declaration of the same groupId:artifactId with a different scope silently
             drops one of the two (Maven warns and keeps only the first-seen).
@@ -217,6 +240,22 @@
         <dependency>
             <groupId>org.hibernate.validator</groupId>
             <artifactId>hibernate-validator</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!--
+            Test-only Jakarta EL implementation. hibernate-validator only declares jakarta.el-api
+            (the interface) as optional/provided - Boot's own spring-boot-starter-validation supplies
+            the actual implementation via this same artifact (see spring-boot-validation's pom), which
+            this module deliberately doesn't depend on (Convention #2: it would force an EL/validation
+            implementation onto every consumer just to compile). Under Hibernate ORM 7 / Hibernate
+            Validator 9 (Boot 4), building the default ValidatorFactory at SessionFactory startup now
+            hard-fails with HV000183/NoClassDefFoundError(jakarta.el.ELManager) if none is present -
+            caught empirically bumping to Boot 4, where every context-starting test failed the same
+            way. Test-scope only, so it never reaches a consuming application's classpath.
+        -->
+        <dependency>
+            <groupId>org.apache.tomcat.embed</groupId>
+            <artifactId>tomcat-embed-el</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

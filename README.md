@@ -120,7 +120,7 @@ curl smoke test, and running more than one tenant.
   extension points, and the actor-identity trust model.
 - **`audit_log/audit-log-spring-boot-starter`** - the pom-only dependency aggregator consuming
   applications should actually depend on (pulls in the autoconfigure module plus
-  `spring-boot-starter-aop`).
+  `spring-boot-starter-aspectj`).
 - **`audit_log/audit-log-server-proto`** - the Protobuf (`.proto`) wire schema and generated Java
   stubs (Protobuf messages plus, as of WP18, a gRPC service) for the REST and gRPC server modules
   below, with no Spring dependency of its own. See [`docs/CLIENT_CODEGEN.md`](docs/CLIENT_CODEGEN.md)

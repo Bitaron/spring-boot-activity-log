@@ -74,7 +74,7 @@
             The starter, not audit-log-spring-boot-autoconfigure directly - identical rationale to
             audit-log-spring-boot-server's pom comment: AuditLogAutoConfiguration always attempts to
             register an AuditLogAspect bean, whose class references AspectJ types at the bytecode
-            level; loading it without spring-boot-starter-aop actually on the classpath throws
+            level; loading it without spring-boot-starter-aspectj actually on the classpath throws
             NoClassDefFoundError, not a graceful skip. The starter already supplies it as a real
             dependency.
         -->

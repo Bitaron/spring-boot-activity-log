@@ -63,10 +63,13 @@
             <version>${project.version}</version>
         </dependency>
         <!-- AOP is what actually intercepts @Audit methods; a consumer of the starter needs it
-             at compile+runtime, so it is a real (non-provided) dependency here. -->
+             at compile+runtime, so it is a real (non-provided) dependency here. Boot 4 renamed
+             spring-boot-starter-aop to spring-boot-starter-aspectj (same spring-aop + aspectjweaver
+             contents, proxy-based Spring AOP - not full AspectJ compile/load-time weaving; verified
+             against the artifact's own published pom). -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-aop</artifactId>
+            <artifactId>spring-boot-starter-aspectj</artifactId>
         </dependency>
     </dependencies>
 

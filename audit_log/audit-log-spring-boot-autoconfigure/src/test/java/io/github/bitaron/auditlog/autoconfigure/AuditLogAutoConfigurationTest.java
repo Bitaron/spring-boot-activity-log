@@ -21,11 +21,11 @@ import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
-import org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration;
+import org.springframework.boot.data.jpa.autoconfigure.DataJpaRepositoriesAutoConfiguration;
 import org.springframework.boot.context.annotation.ImportCandidates;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
-import org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration;
-import org.springframework.boot.autoconfigure.transaction.TransactionAutoConfiguration;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
+import org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration;
+import org.springframework.boot.transaction.autoconfigure.TransactionAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -50,7 +50,7 @@ class AuditLogAutoConfigurationTest {
 
     // Every real Spring Boot application registers AutoConfigurationPackages implicitly via
     // @SpringBootApplication; HostAppMarker (@AutoConfigurationPackage) stands in for that here,
-    // since JpaRepositoriesAutoConfiguration requires it to be present in any context at all -
+    // since DataJpaRepositoriesAutoConfiguration requires it to be present in any context at all -
     // this is what makes hostApplicationOwnEntityAndRepositoryStillDiscovered() below a faithful
     // regression test rather than a synthetic one.
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
@@ -62,7 +62,7 @@ class AuditLogAutoConfigurationTest {
                     DataSourceAutoConfiguration.class,
                     HibernateJpaAutoConfiguration.class,
                     TransactionAutoConfiguration.class,
-                    JpaRepositoriesAutoConfiguration.class,
+                    DataJpaRepositoriesAutoConfiguration.class,
                     AuditLogAutoConfiguration.class));
 
     /**
